@@ -1,0 +1,10 @@
+name: you-should-know
+label: You Should Know
+version: 1.0.0
+description: >-
+  You Should Know — after a long reply (3,000+ characters) in a chat you opened, a second model
+  (Opus) reads the reply and lifts what you must not miss (cost, irreversible step, security,
+  your move, assumption, deadline) into a notice that stays until dismissed. Nothing to flag,
+  nothing shown. Keeps a cost ledger without reply text.
+author: Muhammed Enes Alpler
+kind: standalone

@@ -1,0 +1,7 @@
+{
+  "name": "you-should-know",
+  "label": "You Should Know",
+  "description": "After a long reply, a second model (Opus) lifts what you must not miss into a notice that stays until dismissed; nothing to flag, nothing shown.",
+  "version": "1.0.0",
+  "api": "plugin_api.py"
+}
