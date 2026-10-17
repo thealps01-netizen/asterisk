@@ -334,7 +334,8 @@ check(p.get("headline") == HEADLINE + " now" and list(p) == ["kind", "by", "head
       f"the headline comes back whitespace-collapsed; a point is {{kind, by, headline, text}} ({p})")
 check(sorted(out) == sorted(["points", "cost_usd", "cost_status", "chars", "at", "title"]) and out["at"] == ledger()[-1]["at"] == 1000.0,
       f"the response keys are exactly points, cost_usd, cost_status, chars, at, title; at equals the ledger line's at ({sorted(out)})")
-check(out["title"] == "TITLE-MARKER deploy plan" and Store.title_reads[-1:] == ["st-1"] and len(Store.opened) == opened + 2,
+check(out["title"] == "TITLE-MARKER deploy plan" and Store.title_reads[-1:] == ["st-1"] and len(Store.opened) == opened + 2
+      and Store.opened[-1] == {"db_path": None, "read_only": True},
       f"with a point the chat's title is read (read-only, a second store open) and returned ({out['title']!r})")
 Fake.answer = json.dumps({"points": [{"kind": "cost", "by": "user", "language": "English", "headline": "H" * 120, "text": "It costs."}]})
 p = api.check("st-1", RECEIPT)["points"][0]

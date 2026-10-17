@@ -1,0 +1,10 @@
+{
+  "name": "you-should-know-gates",
+  "private": true,
+  "description": "Pinned to the versions in the Hermes core's apps/desktop/package.json: the desktop half is rendered with real React in jsdom. Run `npm ci` here once before the gates.",
+  "devDependencies": {
+    "jsdom": "29.1.1",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  }
+}
