@@ -1,4 +1,4 @@
-"""You Should Know — the seams the plugin uses in the Hermes core still exist and still mean the same.
+"""Asterisk — the seams the plugin uses in the Hermes core still exist and still mean the same.
 
 Run: python contract_core.py [--core <hermes-agent checkout>]      (exit 0 = the contract holds)
      python contract_core.py --selftest                              (each seam fails on a broken copy)
@@ -27,6 +27,16 @@ Seams:
   sdkui        the SDK exports COMPOSER_AREAS, SESSION_ROW_AREAS, usePluginI18n, useValue (nanostores'
                useStore) and atom; ctx.register(contribution) returns its disposer
   title        SessionDB has get_session_title(session_id) (SessionTitlesMixin)
+  install      `hermes plugins install` and the app's install name the folder after the manifest's name
+               (plugin_name = manifest.get("name") or ...): plugin.yaml `asterisk` installs plugins/asterisk
+  route        the backend mounts at /api/plugins/<manifest.json name>, and only for a user plugin whose
+               name is in plugins.enabled
+  rest         the desktop's ctx.rest reaches /api/plugins/<plugin.js id><path>: the three names must agree
+  desktophalf  the desktop half is a copy of plugins/<folder>/desktop named after the folder, pruned when
+               its package's plugin.js is gone (how an uninstall removes the 2.x half)
+  remove       uninstall moves the package tree out of plugins/ (os.replace), its own folder only
+  shim         the SDK shim exports only the names it has (a namespace import always links)
+  installui    Capabilities -> Plugins offers "Install from Git" and "Uninstall" (the README's steps)
 """
 from __future__ import annotations
 
@@ -57,7 +67,21 @@ FILES = {
     "rowslot_view": "apps/desktop/src/app/chat/sidebar/session-row-slots.tsx",
     "row": "apps/desktop/src/app/chat/sidebar/session-row.tsx",
     "titles": "hermes_state_titles.py",
+    "install": "hermes_cli/plugins_cmd_install.py",
+    "dashboard": "hermes_cli/web_server_dashboard.py",
+    "api_plugins": "apps/desktop/src/api/plugins.ts",
+    "desktop_root": "apps/desktop/electron/desktop-plugins-root.ts",
+    "remove": "hermes_cli/plugins_cmd_remove.py",
+    "runtime": "apps/desktop/src/sdk/runtime.ts",
+    "plugins_tab": "apps/desktop/src/app/capabilities/plugins/plugins-tab.tsx",
+    "en": "apps/desktop/src/i18n/en.ts",
 }
+
+
+def lit(text: str) -> str:
+    """A seam that is one exact piece of source."""
+    return re.escape(text)
+
 
 SEAMS: dict[str, list[tuple[str, str]]] = {
     "frame": [("events", r'event\("message\.complete", MessageCompletePayload'),
@@ -116,6 +140,23 @@ SEAMS: dict[str, list[tuple[str, str]]] = {
               ("ctx", r"^\s+register: \(c: PluginContribution\) => \(\) => void$")],
     "title": [("titles", r"^\s+def get_session_title\(self, session_id: str\) -> Optional\[str\]:$"),
               ("state", r"^class SessionDB\((?:[^)]|\n)*\bSessionTitlesMixin\b")],
+    "install": [("install", lit('plugin_name = manifest.get("name") or ('))],
+    "route": [("dashboard", lit('name = data.get("name", child.name)')),
+              ("dashboard", lit("prefix=f\"/api/plugins/{plugin['name']}\"")),
+              ("dashboard", lit('if source == "user" and plugin_name not in enabled_set:'))],
+    "rest": [("api_plugins", lit("path: `/api/plugins/${pluginId}${suffix}`")),
+             ("ctx", lit("rest: <T>(path: string, opts?: PluginRestOptions) => pluginRest<T>(pluginId, path, opts),"))],
+    "desktophalf": [("desktop_root", lit("const sourceDir = path.join(packageDir, 'desktop')")),
+                    ("desktop_root", lit("const target = path.join(appRoot, packageName)")),
+                    ("desktop_root", lit("result = await materializeDesktopHalf(path.join(pluginsRoot, name), appRoot, name)")),
+                    ("desktop_root", lit("if (marker && (await sourceGone(name, path.join(marker.source, 'plugin.js')))) {"))],
+    "remove": [("remove", lit("os.replace(target, backup)"))],
+    "shim": [("runtime", lit("export default m.default ?? m;")),
+             ("runtime", lit("export const { ${names.join(', ')} } = m;"))],
+    "installui": [("plugins_tab", lit("openPluginInstallRequest({ profile: scope, repo: '' })")),
+                  ("en", lit("installFromGit: 'Install from Git',")),
+                  ("en", lit("uninstall: 'Uninstall',")),
+                  ("en", lit("tabPlugins: 'Plugins',"))],
 }
 
 

@@ -63,7 +63,10 @@ jobs:
             /apps/desktop/src/app/chat/composer/contrib.ts /apps/desktop/src/app/chat/composer/index.tsx \
             /apps/desktop/src/contrib/react/slot.tsx /apps/desktop/src/lib/session-row-slots.ts \
             /apps/desktop/src/app/chat/sidebar/session-row-slots.tsx /apps/desktop/src/app/chat/sidebar/session-row.tsx \
-            /hermes_state_titles.py /apps/desktop/src/styles.css
+            /hermes_state_titles.py /apps/desktop/src/styles.css \
+            /hermes_cli/plugins_cmd_install.py /hermes_cli/web_server_dashboard.py /hermes_cli/plugins_cmd_remove.py \
+            /apps/desktop/src/api/plugins.ts /apps/desktop/electron/desktop-plugins-root.ts /apps/desktop/src/sdk/runtime.ts \
+            /apps/desktop/src/app/capabilities/plugins/plugins-tab.tsx /apps/desktop/src/i18n/en.ts
           for i in 1 2 3; do git -C "$core" fetch -q --depth 1 origin "$CORE_SHA" && break; sleep $((i*20)); done
           git -C "$core" checkout -q FETCH_HEAD
           test -f "$core/agent/auxiliary_client.py" || { echo "core sources missing"; exit 1; }

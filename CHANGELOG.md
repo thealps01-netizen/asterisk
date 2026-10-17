@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.0.0 (2026-10-17)
+
+- Renamed to Asterisk. Every identifier that carried the old name now says `asterisk`: the plugin
+  folder `plugins/asterisk`, the desktop half `desktop-plugins/asterisk`, the routes
+  `/api/plugins/asterisk/check`, `/api/plugins/asterisk/feedback` and the new
+  `/api/plugins/asterisk/status`, the auxiliary task `asterisk`, the ledger
+  `state/asterisk/ledger.jsonl` and the evaluation output `state/asterisk/eval/`. Breaking for
+  anything that called the old routes or read the old paths.
+- Install and update from the Hermes app: Capabilities → Plugins → Install from Git with the
+  repository URL, and the row's Update button. No terminal and no copying by hand.
+- Upgrading from 2.x: uninstall the `you-should-know` row, then install Asterisk. The first ledger
+  line copies the 2.x ledger to `state/asterisk/ledger.jsonl` once, byte for byte; the old
+  `state/you-should-know/` folder is left as it was.
+- While the 2.x package is still installed in the same profile, Asterisk stands down: `/check`
+  answers 409 and the desktop half stops checking and says so once per app start, so no reply is
+  checked twice.
+- On a Hermes too old for Asterisk (a desktop SDK or a core without the seams it uses) it stays off
+  (on an old desktop it registers nothing) and shows one "update Hermes" notice, once per profile:
+  the backend remembers it with an empty flag file, `state/asterisk/update-hermes-notice`. The
+  desktop half imports the SDK as a namespace, so an old app loads it instead of failing.
+- No change to what is checked, the prompt or the strip.
+
 ## 2.1.0 (2026-10-17)
 
 - The "Worth knowing" headline strip above the input replaces the warning toast: the point as a

@@ -1,6 +1,6 @@
-# You Should Know
+# Asterisk
 
-A Hermes plugin. After a long reply (3,000+ characters) in a chat you opened in the desktop app, a
+Asterisk is a Hermes plugin. After a long reply (3,000+ characters) in a chat you opened in the desktop app, a
 second model (Opus) rereads that whole turn — your message, the assistant's tool calls and their
 results, and the reply — and, only when there is one, names the one thing the reply did not plainly
 tell you: an unstated tradeoff, a result that may be off, a silent assumption, an understated
@@ -11,26 +11,46 @@ nothing is shown.
 Each check costs about 5 cents: measured on 14 real turns from one user (2026-10-17), the mean was
 about $0.05 and the range about $0.02–0.08, against about $0.019 for 1.0.0 on the same turns. At ~15
 checks a day that is about $22 a month. Each check is recorded (without any text) in a ledger. See
-`Docs/you-should-know-notes.md` for how it works, the cost and the review.
+`Docs/asterisk-notes.md` for how it works, the cost and the review.
 
 ## Layout
 
 | Path | What |
 |---|---|
 | `desktop/plugin.js` | Desktop half: picks replies, calls the backend, shows the headline strip above the input and the sidebar dot |
-| `dashboard/plugin_api.py` | Backend: `POST /check`, `POST /feedback`, reading the turn, redaction and caps, the model call, the ledger |
+| `dashboard/plugin_api.py` | Backend: `POST /check`, `POST /feedback`, `POST /status`, reading the turn, redaction and caps, the model call, the ledger |
 | `eval/compare_checkers.py` | Offline evaluation: 1.0.0 against this checker on past turns (opt-in, below) |
 | `plugin.yaml`, `dashboard/manifest.json`, `__init__.py` | Hermes plugin metadata |
 | `tests/` | Gates (below) |
 
 ## Install
 
-Needs Hermes v0.21.6 or later (its `message.complete` frames carry the turn's row ids).
+Needs Hermes v0.21.6 or later (its `message.complete` frames carry the turn's row ids). In the Hermes
+app, no terminal:
 
-1. Clone this repository into `<HERMES_HOME>/plugins/you-should-know` and check out a release tag.
-2. Copy `desktop/plugin.js` to `<HERMES_HOME>/desktop-plugins/you-should-know/plugin.js`. The desktop
-   half and the backend must come from the same release (2.0.0 changed the request between them).
-3. Restart the desktop app (the backend route mounts at start).
+1. Open Capabilities → Plugins and click **Install from Git**.
+2. Paste `https://github.com/thealps01-netizen/asterisk`.
+3. Click **Review repository**, then **Install**.
+4. On Hermes v0.21.6 only: switch on the Desktop half of the Asterisk row if it is off.
+
+In a terminal instead: `hermes plugins install thealps01-netizen/asterisk --enable`, then switch on
+the Desktop half in Capabilities → Plugins.
+
+## Update
+
+Capabilities → Plugins → the Asterisk row's **Update** button (shown when a newer commit is on
+GitHub). An install pinned to a commit updates only by installing again with a new pin.
+
+## Upgrading from 2.x (You Should Know)
+
+1. Capabilities → Plugins → the `you-should-know` row → **Uninstall**, and confirm.
+2. Install Asterisk as in "Install" above.
+3. Nothing else: the first check copies the 2.x ledger over.
+
+Do not use the 2.x row's Update button for this: it keeps the old folder name, and Asterisk stays
+off. The earlier evaluation files stay in `state/you-should-know/eval/`. `state/you-should-know/` is
+left as it was; you may delete it by hand later. In a terminal: `hermes plugins remove you-should-know`,
+then the install line above.
 
 ## Gates
 
@@ -67,7 +87,7 @@ and a "useful / noise" box per point for you to tick.
   does): `python eval/compare_checkers.py --session <stored id> [--turns 3] [--dry-run]`. It starts
   Hermes itself first, from the core checkout it finds by `--core <path>`, `HERMES_CORE`, or
   `<HERMES_HOME>/hermes-agent`; no `PYTHONPATH` is needed.
-- The markdown goes to `<HERMES_HOME>/state/you-should-know/eval/` (or `--out`; a path inside this
+- The markdown goes to `<HERMES_HOME>/state/asterisk/eval/` (or `--out`; a path inside this
   repository is refused). It holds text from your conversations: never commit it.
 
 ## License

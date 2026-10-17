@@ -1,5 +1,5 @@
 /**
- * You Should Know — a light/dark preview of the "Worth knowing" strip, for a reviewer's eyes.
+ * Asterisk — a light/dark preview of the "Worth knowing" strip, for a reviewer's eyes.
  * Not a gate, not run by CI, starts no app.
  *
  * Run: npm ci      (once, in tests/)

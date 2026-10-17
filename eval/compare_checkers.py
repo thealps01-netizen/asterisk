@@ -1,4 +1,4 @@
-"""You Should Know — offline evaluation: the 1.0.0 checker (reply only, up to three points) against the
+"""Asterisk — offline evaluation: the 1.0.0 checker (reply only, up to three points) against the
 turn-aware checker (the whole turn, one point or none), on real past turns of chosen sessions.
 
 Run from the repository root with any Python that can start Hermes (the Hermes venv interpreter does):
@@ -18,7 +18,7 @@ sizes and an ESTIMATE of the new checker's input tokens (characters / 2.5).
 
 What it reads: the profile's session store, read-only (the same chain as the plugin's backend).
 What it writes (live only): one markdown file, by default under
-<HERMES_HOME>/state/you-should-know/eval/, with each turn's points and a "useful / noise" box per
+<HERMES_HOME>/state/asterisk/eval/, with each turn's points and a "useful / noise" box per
 point for a person to tick. That file holds text taken from the conversations: it stays under
 HERMES_HOME, a path inside this repository is refused, and it is never committed.
 Neither checker's check() is called, so the plugin's ledger is never written.
@@ -161,7 +161,7 @@ def point_lines(points) -> list[str]:
 
 
 def markdown(results: list[dict]) -> str:
-    out = [f"# You Should Know — checker comparison ({time.strftime('%Y-%m-%d %H:%M')})", "",
+    out = [f"# Asterisk — checker comparison ({time.strftime('%Y-%m-%d %H:%M')})", "",
            "Conversation-derived text: keep this file under HERMES_HOME, never commit it.", ""]
     for r in results:
         out += [f"## {r['session']} rows {r['rows']}", "",
@@ -184,14 +184,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     bootstrap(args.core)
-    new = load(NEW_API, "ysk_eval_new")
+    new = load(NEW_API, "asterisk_eval_new")
     out = args.out or (new._home() / "state" / new.PLUGIN_ID / "eval" / f"compare-{time.strftime('%Y%m%d-%H%M%S')}.md")
     if out.resolve().is_relative_to(REPO):
         print(f"compare_checkers: refusing to write inside the repository ({out}); the file holds conversation text",
               file=sys.stderr)
         return 2
-    with tempfile.TemporaryDirectory(prefix="ysk-eval-") as tmp:
-        old = load(args.old or old_source(Path(tmp)), "ysk_eval_old")
+    with tempfile.TemporaryDirectory(prefix="asterisk-eval-") as tmp:
+        old = load(args.old or old_source(Path(tmp)), "asterisk_eval_old")
     if args.dry_run:
         new._call_llm = old._call_llm = dry_call
 
