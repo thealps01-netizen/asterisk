@@ -15,6 +15,11 @@ Seams:
   notify       a warning notice stays until dismissed (no auto-dismiss), like an error
   host         host.notify, host.openSession, host.state.focusedSessionId / focusedStoredSessionId
   ctx          ctx.rest, ctx.onEvent, ctx.onDispose, ctx.pet with say and visible
+  receipt      message.complete carries persisted_turn (PersistedTurn: row_ids, complete, user_row_id,
+               final_assistant_row_id), and prompt_turn fills it with the committed rows of the turn
+  store        hermes_state.SessionDB(db_path, read_only), close(), resolve_session_id,
+               resolve_resume_session_id and get_messages(..., limit, latest, include_ancestors)
+  redact       agent.redact.redact_sensitive_text(text, *, force, ..., redact_url_credentials)
 """
 from __future__ import annotations
 
@@ -33,6 +38,11 @@ FILES = {
     "notify": "apps/desktop/src/store/notifications.ts",
     "sdk": "apps/desktop/src/sdk/index.ts",
     "ctx": "apps/desktop/src/contrib/plugin.ts",
+    "turn": "tui_gateway/prompt_turn.py",
+    "state": "hermes_state.py",
+    "messages": "hermes_state_messages.py",
+    "sessions": "hermes_state_sessions.py",
+    "redact": "agent/redact.py",
 }
 
 SEAMS: dict[str, list[tuple[str, str]]] = {
@@ -60,6 +70,23 @@ SEAMS: dict[str, list[tuple[str, str]]] = {
             ("ctx", r"^\s+pet: PluginPet$"),
             ("ctx", r"^\s+say: \(text: string, options\?: PetSayOptions\) => \(\) => void$"),
             ("ctx", r"^\s+visible: ReadableAtom<boolean>$")],
+    "receipt": [("events", r"^class PersistedTurn\(Payload\):"),
+                ("events", r"^\s+row_ids: list\[int\]$"),
+                ("events", r"^\s+complete: bool$"),
+                ("events", r"^\s+user_row_id: int \| None = None$"),
+                ("events", r"^\s+final_assistant_row_id: int \| None = None$"),
+                ("events", r"^\s+persisted_turn: PersistedTurn \| None = None$"),
+                ("turn", r'^\s+payload\["persisted_turn"\] = receipt$'),
+                ("turn", r'^\s+receipt\["final_assistant_row_id"\] = final_id$')],
+    "store": [("state", r"^\s+def __init__\(self, db_path: Path \| None = None, read_only: bool = False\):$"),
+              ("state", r"^\s+def close\(self\):$"),
+              ("messages", r"^\s+def get_messages\(self, session_id: str, include_inactive: bool = False, include_compacted: bool = False,\n"
+                           r"\s+limit: Optional\[int\] = None, offset: int = 0, latest: bool = False,\n"
+                           r"\s+after_id: Optional\[int\] = None, include_ancestors: bool = False\) -> list\[dict\[str, Any\]\]:"),
+              ("messages", r"^\s+def resolve_resume_session_id\(self, session_id: str\) -> str:$"),
+              ("sessions", r"^\s+def resolve_session_id\(self, session_id_or_prefix: str\) -> Optional\[str\]:$")],
+    "redact": [("redact", r"^def redact_sensitive_text\(text: str, \*, force: bool = False,"),
+               ("redact", r"^\s+redact_url_credentials: bool = False\) -> str:$")],
 }
 
 

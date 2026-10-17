@@ -9,6 +9,10 @@ Rules:
               storage of its own: its only doors are ctx.rest (its own backend) and host.notify
   versions    plugin.yaml, dashboard/manifest.json and the top CHANGELOG heading name one version
   model       the model and the price floor the notes describe are the ones the backend uses
+  caps        the notes state the total and the per-tool-result caps (MAX_TURN_CHARS,
+              MAX_TOOL_RESULT_CHARS) as the backend has them
+  eval        CI never runs the offline evaluation (it spends money): ci.yml names neither eval/
+              nor compare_checkers
   installed   the desktop copy the app loads equals desktop/plugin.js (only when it exists here)
 """
 from __future__ import annotations
@@ -63,6 +67,15 @@ def audit(root: Path, installed: Path | None) -> list[str]:
         problems.append("model: the backend and the desktop half disagree on the length floor")
     elif f"{int(floor.group(1)):,}" not in notes:
         problems.append("model: the notes do not state the length floor the code uses")
+
+    for name in ("MAX_TURN_CHARS", "MAX_TOOL_RESULT_CHARS"):
+        cap = re.search(rf"^{name} = (\d+)$", api, re.M)
+        if not cap or not re.search(rf"(?<![\d,]){int(cap.group(1)):,}(?![\d,])", notes):
+            problems.append(f"caps: the notes do not state {name} as the backend has it")
+
+    ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    if "eval/" in ci or "compare_checkers" in ci:
+        problems.append("eval: ci.yml mentions the offline evaluation — it spends money and never runs in CI")
 
     if installed and installed.exists() and installed.read_bytes() != (root / "desktop" / "plugin.js").read_bytes():
         problems.append(f"installed: {installed} differs from desktop/plugin.js — reinstall, the app loads that copy")

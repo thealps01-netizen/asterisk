@@ -12,14 +12,19 @@
  *      reply or a chat never opened is never sent.
  *   3. Once per reply: the same text again is not checked twice; a reply differing only at its end
  *      is a different reply (the key covers the whole text).
- *   4. The notice (a chat is filed under its own stored id whatever order the app sets the focus
- *      atoms in): warning kind (stays until dismissed), the first point as the message with its kind
- *      named, the others as the detail, the cost as meta; "Open chat" only when the reply's chat is
- *      not the focused one, and it opens that chat.
- *   5. Nothing to flag -> no notice. A failed check -> one error notice that names the error.
- *   6. Pet: a line only when a pet is on screen.
- *   7. Copy: every key the source asks for resolves (no raw key on screen); an unknown kind shows the
- *      point without a label, never a key.
+ *   4. The request: POST /check with exactly { session_id, turn } — the stored id of the reply's OWN
+ *      chat (even when another chat is in focus) and the frame's persisted_turn receipt as is; never
+ *      the reply's text. A frame without a receipt still posts, with turn: null (the backend's
+ *      refusal becomes the error notice, never a silent skip).
+ *   5. The notice (a chat is filed under its own stored id whatever order the app sets the focus
+ *      atoms in): warning kind (stays until dismissed), the one point as the message with its kind
+ *      named and no detail, the cost as meta; "Open chat" only when the reply's chat is not the
+ *      focused one, and it opens that chat.
+ *   6. Nothing to flag -> no notice. A failed check -> one error notice that names the error.
+ *   7. Pet: a line only when a pet is on screen.
+ *   8. Copy: every key the source asks for resolves (no raw key on screen); the six kinds (tradeoff,
+ *      result, assumption, irreversible, security, cost) have their labels and the retired ones
+ *      (action, deadline) are gone; an unknown kind shows the point without a label, never a key.
  */
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -81,6 +86,10 @@ const emit = async (session_id, payload) => {
 }
 const LONG = 'A'.repeat(2990) + ' — the end of a long reply.'
 const long = tag => `${LONG} ${tag}`
+// The frame's receipt, as tui_gateway's _persisted_turn_receipt sends it.
+const receipt = base => ({ row_ids: [base, base + 1, base + 2], complete: true, user_row_id: base, final_assistant_row_id: base + 2 })
+const frame = (tag, base) => ({ status: 'complete', text: long(tag), persisted_turn: receipt(base) })
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
 
 // 1. registration
 mod.default.register(ctx)
@@ -102,33 +111,39 @@ check(rest.length === 0, 'a reply in a chat never opened here is not sent')
 await emit('rt-1', { text: long('mirror') })
 check(rest.length === 0, 'a mirror frame is not sent')
 
-// 3/4. a checked reply with points, in the focused chat
-reply = { points: [{ kind: 'cost', text: 'Running it costs ~$30 a month.' }, { kind: 'action', text: 'Restart the app.' }, { kind: 'nonsense', text: 'Odd kind.' }], cost_usd: 0.0213, cost_status: 'estimated' }
-await emit('rt-1', { status: 'complete', text: long('one') })
-check(rest.length === 1 && rest[0][0] === '/check' && rest[0][1]?.method === 'POST' && rest[0][1]?.body?.text === long('one'),
-  'a long reply of the focused chat is sent whole to POST /check')
+// 3/4/5. a checked reply with a point, in the focused chat
+reply = { points: [{ kind: 'tradeoff', by: 'assistant', text: 'The assistant chose SQLite over Postgres without saying it drops concurrent writes.' }], cost_usd: 0.0213, cost_status: 'estimated' }
+await emit('rt-1', frame('one', 10))
+const body1 = rest[0]?.[1]?.body
+check(rest.length === 1 && rest[0][0] === '/check' && rest[0][1]?.method === 'POST', 'a long reply of the focused chat is sent to POST /check')
+check(same(Object.keys(body1 || {}).sort(), ['session_id', 'turn']) && body1.session_id === 'st-1' && same(body1.turn, receipt(10)),
+  `the body is { session_id, turn }: the chat's stored id and the frame's receipt as is (${JSON.stringify(body1)})`)
+check(!('text' in (body1 || {})) && !JSON.stringify(body1).includes(LONG.slice(0, 50)), 'the reply\'s text is not sent')
 let n = stub.calls.notify.at(-1)
 check(n?.kind === 'warning' && n?.title === 'You should know', `a warning notice (stays until dismissed) titled "You should know" (${n?.kind})`)
-check(n?.message === 'Cost: Running it costs ~$30 a month.', `the first point is the message, its kind named (${n?.message})`)
-check(n?.detail === '• Your move: Restart the app.\n• Odd kind.', `the other points are the detail; an unknown kind shows no raw key (${JSON.stringify(n?.detail)})`)
+check(n?.message === 'Tradeoff: The assistant chose SQLite over Postgres without saying it drops concurrent writes.', `the one point is the message, its kind named (${n?.message})`)
+check(n && !('detail' in n), `one point: no detail (${JSON.stringify(n?.detail)})`)
 check(n?.meta === 'Checked by Opus · ~$0.02', `the meta names the check and its cost (${n?.meta})`)
 check(!n?.action, 'no "Open chat" for the chat already in focus')
 check(pet.said.length === 0, 'no pet on screen -> nothing is said')
 const shown = stub.calls.notify.length
-await emit('rt-1', { status: 'complete', text: long('one') })
+await emit('rt-1', frame('one', 10))
 check(rest.length === 1 && stub.calls.notify.length === shown, 'the same reply is checked once')
 check(mod.replyKey(long('one')) !== mod.replyKey(long('onf')) && mod.replyKey('ab') !== mod.replyKey('ba'), 'a reply differing only at its end is a different reply')
 
-// 4. a reply in another chat the user opened earlier
+// 4/5. a reply in another chat the user opened earlier
 // The app sets the stored atom first here: the pair is read once both have settled.
 stub.host.state.focusedStoredSessionId.set('st-2')
 stub.host.state.focusedSessionId.set('rt-2')
 await settle()
 pet.visible = true
-reply = { points: [{ kind: 'irreversible', text: 'The script deletes the old backups.' }], cost_usd: 0.004, cost_status: 'estimated' }
-await emit('rt-1', { status: 'complete', text: long('two') })
+reply = { points: [{ kind: 'irreversible', by: 'user', text: 'You asked to delete the old backups; the reply calls it a cleanup.' }], cost_usd: 0.004, cost_status: 'estimated' }
+await emit('rt-1', frame('two', 20))
+const body2 = rest.at(-1)?.[1]?.body
+check(body2?.session_id === 'st-1' && same(body2?.turn, receipt(20)),
+  `a reply finishing in a chat not in focus sends THAT chat's stored id, not the focused one (${body2?.session_id})`)
 n = stub.calls.notify.at(-1)
-check(n?.message === 'Cannot be undone: The script deletes the old backups.' && n?.detail === undefined && n?.meta === 'Checked by Opus · <$0.01',
+check(n?.message === 'Cannot be undone: You asked to delete the old backups; the reply calls it a cleanup.' && n?.detail === undefined && n?.meta === 'Checked by Opus · <$0.01',
   `one point, no detail, a sub-cent cost (${n?.message} | ${n?.meta})`)
 check(n?.action?.label === 'Open chat', 'a reply in a chat not in focus offers "Open chat"')
 n?.action?.onClick()
@@ -137,34 +152,46 @@ check(stub.calls.opened.at(-1) === 'st-1', `"Open chat" opens the reply's own ch
 check(pet.said.length === 1 && pet.said[0][0] === 'You should know: 1 point in the notice', `with a pet on screen it points to the notice (${JSON.stringify(pet.said)})`)
 check(n?.id !== stub.calls.notify[shown - 1]?.id, 'each reply gets its own notice')
 
-// 5. nothing to flag; a failed check
+// 6. nothing to flag; a failed check
 const before = stub.calls.notify.length
 reply = { points: [], cost_usd: 0.02, cost_status: 'estimated' }
-await emit('rt-2', { status: 'complete', text: long('three') })
+await emit('rt-2', frame('three', 30))
 check(rest.length === 3 && stub.calls.notify.length === before, 'nothing to flag -> no notice')
 restFails = 'model call failed (APITimeoutError)'
 const warn = console.warn
 console.warn = () => {}
-await emit('rt-2', { status: 'complete', text: long('four') })
-console.warn = warn
+await emit('rt-2', frame('four', 40))
 n = stub.calls.notify.at(-1)
 check(n?.kind === 'error' && n?.id === 'you-should-know-error' && n?.message === 'Could not check a long reply: model call failed (APITimeoutError)',
   `a failed check is one error notice that names the error (${n?.message})`)
+// 4. a frame without a receipt (a core before persisted_turn) still posts; the refusal is the error notice
+restFails = 'turn ids missing or malformed'
+await emit('rt-2', { status: 'complete', text: long('no receipt') })
+console.warn = warn
+const body3 = rest.at(-1)?.[1]?.body
+check(rest.length === 5 && body3?.session_id === 'st-2' && 'turn' in body3 && body3.turn === null,
+  `a frame without a receipt still posts, with turn: null (${JSON.stringify(body3)})`)
+n = stub.calls.notify.at(-1)
+check(n?.kind === 'error' && n?.message === 'Could not check a long reply: turn ids missing or malformed', `the refusal is the error notice, never a silent skip (${n?.message})`)
 restFails = null
 check(mod.fmtCost(null, 'unknown') === '' && mod.fmtCost(0.7, 'unknown') === '' && mod.fmtCost(0, 'included') === 'subscription' && mod.fmtCost(0.38, 'actual') === '$0.38',
   'cost text: unpriced is empty even with an amount stored, subscription named, billed as is')
 check(mod.noticeFor({ points: [], cost_usd: 1, cost_status: 'estimated' }, { key: 'k' }) === null, 'no points -> no notice')
-reply = { points: [{ kind: 'security', text: 'The token is in the log.' }], cost_usd: null, cost_status: 'unknown' }
-await emit('rt-2', { status: 'complete', text: long('five') })
+reply = { points: [{ kind: 'security', by: 'assistant', text: 'The token is in the log.' }], cost_usd: null, cost_status: 'unknown' }
+await emit('rt-2', frame('five', 50))
 check(stub.calls.notify.at(-1)?.meta === 'Checked by Opus', `an unpriced check names no cost, never $0 (${stub.calls.notify.at(-1)?.meta})`)
 
-// 7. every key the source asks for resolves
+// 8. every key the source asks for resolves; the six kinds have their labels
 const keys = [...source.matchAll(/\bt\('([a-z.]+)'/g)].map(m => m[1])
 const raw = keys.filter(k => mod.t(k, 1, 'x') === k)
 check(keys.length >= 5 && raw.length === 0, `every t() key resolves (${keys.length} keys${raw.length ? `, raw: ${raw}` : ''})`)
-for (const kind of ['cost', 'irreversible', 'security', 'action', 'assumption', 'deadline']) {
-  if (mod.t(`ysk.kind.${kind}`) === `ysk.kind.${kind}`) check(false, `kind ${kind} has a label`)
-}
+const LABELS = { tradeoff: 'Tradeoff', result: 'Result may be off', assumption: 'Assumption', irreversible: 'Cannot be undone', security: 'Security', cost: 'Cost' }
+const labels = Object.keys(LABELS).map(k => mod.t(`ysk.kind.${k}`))
+check(same(labels, Object.values(LABELS)), `the six kind labels resolve (${labels.join(' | ')})`)
+check(mod.t('ysk.kind.action') === 'ysk.kind.action' && mod.t('ysk.kind.deadline') === 'ysk.kind.deadline' && !/\b(action|deadline):\s*'/.test(source),
+  'the retired kinds action and deadline are no longer listed')
+const odd = mod.noticeFor({ points: [{ kind: 'nonsense', by: 'assistant', text: 'Odd kind.' }] }, { key: 'k' })
+check(odd?.message === 'Odd kind.', `an unknown kind shows the point without a label, never a raw key (${odd?.message})`)
 
 // 1. dispose
 disposers.forEach(fn => fn())
