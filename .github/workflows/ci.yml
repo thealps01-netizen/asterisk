@@ -54,7 +54,8 @@ jobs:
           git -C "$core" sparse-checkout init --no-cone
           # MSYS_NO_PATHCONV: Git Bash on Windows would rewrite /agent/ into C:/Program Files/Git/agent/
           MSYS_NO_PATHCONV=1 git -C "$core" sparse-checkout set /tui_gateway/contracts/events.py /agent/auxiliary_client.py \
-            /agent/usage_pricing.py /apps/desktop/src/store/notifications.ts /apps/desktop/src/sdk/index.ts /apps/desktop/src/contrib/plugin.ts
+            /agent/usage_pricing.py /apps/desktop/src/store/notifications.ts /apps/desktop/src/sdk/index.ts /apps/desktop/src/contrib/plugin.ts \
+            /tui_gateway/prompt_turn.py /hermes_state.py /hermes_state_messages.py /hermes_state_sessions.py /agent/redact.py
           for i in 1 2 3; do git -C "$core" fetch -q --depth 1 origin "$CORE_SHA" && break; sleep $((i*20)); done
           git -C "$core" checkout -q FETCH_HEAD
           test -f "$core/agent/auxiliary_client.py" || { echo "core sources missing"; exit 1; }
