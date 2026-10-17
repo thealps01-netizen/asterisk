@@ -7,9 +7,10 @@ tell you: an unstated tradeoff, a result that may be off, a silent assumption, a
 irreversible step, a security risk or a cost, and who decided it (the assistant or you). It shows as a
 notice that stays until you dismiss it. Most turns have nothing to flag; then nothing is shown.
 
-Each check costs about 1–7 cents (an estimate; it grows with the turn's tool output) and is recorded
-(without any text) in a ledger. See `Docs/you-should-know-notes.md` for how it works, the cost and the
-review.
+Each check costs about 5 cents: measured on 14 real turns from one user (2026-10-17), the mean was
+about $0.05 and the range about $0.02–0.08, against about $0.019 for 1.0.0 on the same turns. At ~15
+checks a day that is about $22 a month. Each check is recorded (without any text) in a ledger. See
+`Docs/you-should-know-notes.md` for how it works, the cost and the review.
 
 ## Layout
 
@@ -55,8 +56,10 @@ and a "useful / noise" box per point for you to tick.
 - A live run spends money: two Opus calls per turn. Nothing runs it on its own — not CI, not an agent.
 - `--dry-run` calls no model and writes nothing; it prints each turn's sizes and an estimate of the
   input tokens. Start there.
-- Run it with the Hermes venv interpreter, from the repository root:
-  `python eval/compare_checkers.py --session <stored id> [--turns 3] [--dry-run]`.
+- Run it from the repository root with any Python that can start Hermes (the Hermes venv interpreter
+  does): `python eval/compare_checkers.py --session <stored id> [--turns 3] [--dry-run]`. It starts
+  Hermes itself first, from the core checkout it finds by `--core <path>`, `HERMES_CORE`, or
+  `<HERMES_HOME>/hermes-agent`; no `PYTHONPATH` is needed.
 - The markdown goes to `<HERMES_HOME>/state/you-should-know/eval/` (or `--out`; a path inside this
   repository is refused). It holds text from your conversations: never commit it.
 

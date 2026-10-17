@@ -38,18 +38,27 @@ mod from the Claude Code mods video (2026-10), rebuilt on Hermes' own extension 
 6. The backend asks `claude-opus-5-5` on the `anthropic` provider through Hermes' auxiliary client
    (`call_llm`, task `you_should_know`, 700 output tokens, 90 s). The answer is strict JSON: no point,
    or one point with a kind (`tradeoff`, `result`, `assumption`, `irreversible`, `security`, `cost`),
-   `by` (`assistant` or `user`) and one sentence. Two points, an unknown kind or a missing `by` is an
-   error, never trimmed and never read as "nothing to flag".
+   `by` (`assistant` or `user`), the language of the final reply and one sentence in that language.
+   The prompt and most tool results are English, so the user message ends, after the turn, with the
+   rule to write in the final reply's language. Two points, an unknown kind, a missing `by` or a
+   missing language is an error, never trimmed and never read as "nothing to flag".
 7. One point becomes one warning notice (the app does not auto-dismiss warnings). No point, no notice.
 
 ## Cost
 
-An **estimate**, from Hermes' price table for Opus 5.5 ($4 per million input tokens, $20 per million
-output) at about 2.5 characters per token: a turn without tools is about 2,500 input tokens, about
-$0.012; a typical turn with tools (about 19,000 characters) about $0.036; a turn at the 32,000 cap
-about $0.06–0.07; the answer adds about $0.003 (at most $0.014). So about 1–7 cents a check (up to
-about 8 with the longest answer), typically 3–4 cents, against 1.0.0's $0.016 median. At ~15 checks a
-day that is about $0.50/day, $15/month. The real figure is in the ledger, not in this estimate.
+A **measurement**, on 14 real turns from 6 sessions of one user (2026-10-17,
+`eval/compare_checkers.py`; dollars estimated by Hermes' price table for Opus 5.5: $4 per million
+input tokens, $20 per million output): mean about **$0.05** a check, range about $0.02–0.08 (input
+4,000–16,000 tokens, mean about 10,200). 1.0.0 cost about $0.019 on the same turns. At ~15 checks a
+day that is about $0.75/day, $22/month (1.0.0: about $8/month). One user's 14 turns are a small
+sample; the ledger has the real figure over time.
+
+Input is about 80% of the cost: the turn itself, capped at 32,000 characters. The rest is
+output, 8–782 tokens a check (mean about 470) even when the answer is `{"points": []}`. Those tokens
+are the model's thinking, not the answer (the JSON is a few dozen tokens): `claude-opus-5-5` thinks
+adaptively and the core lists it as a model whose thinking cannot be switched off
+(`agent/anthropic_adapter.py`, `_MANDATORY_THINKING_CLAUDE_SUBSTRINGS`); the one 8-token check is a
+check where it did not think. Thinking stays on: the measured points came with it.
 
 Usage is read in the chat-completions shape, because that is what the auxiliary client returns.
 Naming the provider when reading it would read the Anthropic shape and count zero tokens.

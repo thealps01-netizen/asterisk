@@ -13,13 +13,17 @@
   move" and "Deadline" are gone. The notice shows the one point; there is no detail.
 - Stricter answer schema: two points, an unknown kind or a missing `by` is an error, never trimmed or
   read as nothing to flag. A turn that cannot be read is a named error too.
+- A point names the final reply's language before its text, and the request ends with the rule to
+  write in that language: points about Turkish replies were coming back in English.
 - New ledger fields: `by`, `turn_chars`, `tool_results`, `truncated`, `turn_complete`; a
   `turn_unreadable` line when the turn could not be read. Still no text.
 - Needs Hermes core v0.21.6 or later (`persisted_turn` on `message.complete`).
 - `POST /check` takes `{session_id, turn}` instead of `{text}`: the desktop half and the backend must
   be updated together.
 - `eval/compare_checkers.py`: an opt-in offline comparison of the 1.0.0 and 2.0.0 checkers on past
-  turns (`--dry-run` calls no model).
+  turns (`--dry-run` calls no model). It starts Hermes itself (`--core`, `HERMES_CORE` or
+  `<HERMES_HOME>/hermes-agent`), so any Python that can start Hermes runs it.
+- Cost, measured on 14 turns: about $0.05 a check (range $0.02–0.08), against about $0.019 for 1.0.0.
 
 ## 1.0.0 (2026-10-11)
 
