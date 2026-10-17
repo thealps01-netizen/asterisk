@@ -7,7 +7,7 @@ The fakes in check_api.py and render_check.mjs stand in for these; this is what 
 
 Seams:
   frame        message.complete carries status (with "complete") and response_reused
-  llm          agent.auxiliary_client.call_llm(task, provider, model, messages, max_tokens, timeout)
+  llm          agent.auxiliary_client.call_llm(task, messages, max_tokens, timeout, route_info)
                and extract_content_or_reasoning(response) exist
   usage        the chat usage shape reads prompt_tokens / completion_tokens, and the Anthropic shape
                does not (why the backend names no provider when it reads usage)
@@ -37,6 +37,15 @@ Seams:
   remove       uninstall moves the package tree out of plugins/ (os.replace), its own folder only
   shim         the SDK shim exports only the names it has (a namespace import always links)
   installui    Capabilities -> Plugins offers "Install from Git" and "Uninstall" (the README's steps)
+  auxtask      a plugin's register(ctx) can call ctx.register_auxiliary_task(key, *, display_name,
+               description, ...), and the registered tasks are served (get_plugin_auxiliary_tasks)
+  taskroute    _resolve_task_provider_model(task, provider, model, ...) prefers explicit args over the
+               task's config, and answers ("auto", model, None, None, api_mode) when nothing is pinned
+               (how the backend tells "no model chosen" without reading config.yaml itself)
+  routeinfo    call_llm takes route_info and fills its provider and model with the route that
+               answered, a fallback included (what the ledger and the strip name)
+  picker       Settings -> Models -> Auxiliary models lists a plugin task by its display_name, with
+               "Set to main" and the unpinned "auto · use main model" (the README's and notice's steps)
 """
 from __future__ import annotations
 
@@ -75,6 +84,9 @@ FILES = {
     "runtime": "apps/desktop/src/sdk/runtime.ts",
     "plugins_tab": "apps/desktop/src/app/capabilities/plugins/plugins-tab.tsx",
     "en": "apps/desktop/src/i18n/en.ts",
+    "plugins": "hermes_cli/plugins.py",
+    "models_router": "hermes_cli/web_routers/models.py",
+    "aux_rows": "apps/desktop/src/app/settings/aux-task-rows.tsx",
 }
 
 
@@ -157,6 +169,19 @@ SEAMS: dict[str, list[tuple[str, str]]] = {
                   ("en", lit("installFromGit: 'Install from Git',")),
                   ("en", lit("uninstall: 'Uninstall',")),
                   ("en", lit("tabPlugins: 'Plugins',"))],
+    "auxtask": [("plugins", r"^\s+def register_auxiliary_task\(\n\s+self, key: str, \*, display_name: str, description: str,"),
+                ("plugins", r"^def get_plugin_auxiliary_tasks\(\)")],
+    "taskroute": [("aux", r'Priority: explicit args > config auxiliary\.\{task\}\.\* > "auto"'),
+                  ("aux", r"^def _resolve_task_provider_model\(\n\s+task: str(?: \| None)? = None, provider: str(?: \| None)? = None, model: str(?: \| None)? = None"),
+                  ("aux", lit('return "auto", resolved_model, None, None, resolved_api_mode'))],
+    "routeinfo": [("aux", lit('route_info["provider"] = provider or "auto"')),
+                  ("aux", lit('route_info["model"] = model or "default"')),
+                  ("aux", r"^def call_llm\(\n(?:.*\n){0,6}?\s+stream_options: dict(?: \| None)? = None, route_info: Optional\[[dD]ict\[str, str\]\] = None,$")],
+    "picker": [("models_router", lit('"label": str(entry.get("display_name") or entry["key"]),')),
+               ("aux_rows", lit("label: entry.label || entry.task,")),
+               ("en", lit("auxiliaryTitle: 'Auxiliary models',")),
+               ("en", lit("setToMain: 'Set to main',")),
+               ("en", lit("autoUseMain: 'auto · use main model',"))],
 }
 
 

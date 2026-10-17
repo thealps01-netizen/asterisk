@@ -16,8 +16,12 @@ Rules:
   versions    plugin.yaml, dashboard/manifest.json and the top CHANGELOG heading name one version
   name        plugin.yaml `name`, manifest.json `name`, PLUGIN_ID in plugin_api.py and `const ID` in
               plugin.js are all `asterisk` (the install folder, the route and the desktop's REST path
-              are each derived from one of them), and call_llm is called with task=PLUGIN_ID
-  model       the model and the price floor the notes describe are the ones the backend uses
+              are each derived from one of them), call_llm is called with task=PLUGIN_ID, and
+              __init__.py registers that auxiliary task (`register_auxiliary_task("asterisk"`)
+  model       the model is the user's choice: plugin_api.py assigns no MODEL / PROVIDER and passes no
+              provider= / model= inside its call_llm( call, plugin.js never says Opus, and the notes
+              name `claude-opus-5-5` (the only model the cost was measured on); the backend and the
+              desktop half share the length floor the notes state
   caps        the notes state the total and the per-tool-result caps (MAX_TURN_CHARS,
               MAX_TOOL_RESULT_CHARS) as the backend has them
   eval        CI never runs the offline evaluation (it spends money): ci.yml names neither eval/
@@ -97,13 +101,22 @@ def audit(root: Path, installed: Path | None, core: Path) -> list[str]:
         problems.append(f"name: every name must be {NAME!r} (folder, route and REST path follow them) — {wrong}")
     if "call_llm(task=PLUGIN_ID," not in api:
         problems.append("name: call_llm is not called with task=PLUGIN_ID")
+    init = (root / "__init__.py").read_text(encoding="utf-8")
+    if 'register_auxiliary_task("asterisk"' not in init:
+        problems.append('name: __init__.py does not register the auxiliary task "asterisk" (its model row in Settings → Models)')
 
     notes = (root / "Docs" / "asterisk-notes.md").read_text(encoding="utf-8")
-    model = re.search(r'^MODEL = "([^"]+)"', api, re.M)
     floor = re.search(r"^MIN_CHARS = (\d+)", api, re.M)
     js_floor = re.search(r"^export const MIN_CHARS = (\d+)", js, re.M)
-    if not model or f"`{model.group(1)}`" not in notes:
-        problems.append("model: the notes do not name the model the backend calls")
+    if re.search(r"^(?:MODEL|PROVIDER)\s*=", api, re.M):
+        problems.append("model: plugin_api.py names a MODEL or PROVIDER again — the model is the user's choice (Settings → Models)")
+    call = re.search(r"(?<![\w.])call_llm\((.*?)\)", api, re.S)
+    if not call or re.search(r"\b(?:provider|model)\s*=", call.group(1)):
+        problems.append("model: the call_llm( call passes provider= or model= — the task's Settings row must decide the route")
+    if "Opus" in js:
+        problems.append("model: desktop/plugin.js says Opus — the strip names the model that answered")
+    if "`claude-opus-5-5`" not in notes:
+        problems.append("model: the notes do not name `claude-opus-5-5`, the only model the cost was measured on")
     if not floor or not js_floor or floor.group(1) != js_floor.group(1):
         problems.append("model: the backend and the desktop half disagree on the length floor")
     elif f"{int(floor.group(1)):,}" not in notes:

@@ -20,6 +20,7 @@ JS = "desktop/plugin.js"
 API = "dashboard/plugin_api.py"
 CI = ".github/workflows/ci.yml"
 MANIFEST = "dashboard/manifest.json"
+INIT = "__init__.py"
 
 MUTATIONS = [
     # which replies
@@ -73,9 +74,27 @@ MUTATIONS = [
     ("the desktop omits the receipt", JS, "turn: payload.persisted_turn || null", "turn: null"),
     # backend
     ("the backend floor drops", API, "MIN_CHARS = 3000", "MIN_CHARS = 2000"),
-    ("the backend calls a cheaper model", API, 'MODEL = "claude-opus-5-5"', 'MODEL = "claude-haiku-4-5"'),
+    ("the backend names a model again", API, "call_llm(task=PLUGIN_ID, messages=messages,",
+     'call_llm(task=PLUGIN_ID, provider="anthropic", model="claude-opus-5-5", messages=messages,'),
+    ("no model chosen falls back to the main model", API,
+     '    if chosen is None:\n        raise HTTPException(status_code=409, detail="no model chosen")\n', ""),
+    ("the auxiliary task is not registered", INIT,
+     '    ctx.register_auxiliary_task("asterisk", display_name="Asterisk", description=DESCRIPTION)\n', "    pass\n"),
+    ("the task registers a default model", INIT, "description=DESCRIPTION)",
+     'description=DESCRIPTION, defaults={"provider": "anthropic", "model": "claude-opus-5-5"})'),
+    ("the cost is priced for the configured model, not the one that answered", API,
+     'estimate_usage_cost(route.get("model"), usage, provider=route.get("provider"))',
+     'estimate_usage_cost((_chosen_route() or {}).get("model"), usage, provider=(_chosen_route() or {}).get("provider"))'),
+    ("the ledger names the configured model, not the one that answered", API,
+     '"provider": route.get("provider"), "model": model,', '"provider": chosen["provider"], "model": chosen["model"],'),
+    ("a failed model lookup blocks the check", API, '        return {"provider": None, "model": None}\n', "        return None\n"),
+    ("the no-model refusal is the generic error toast", JS, "      if (detail.includes('no model chosen')) {", "      if (false) {"),
+    ("the no-model notice repeats on every reply", JS, "        if (!noModelShown) {", "        if (true) {"),
+    ("the no-model refusal stops later checks", JS, "          noModelShown = true\n", "          noModelShown = true\n          off = true\n"),
+    ("the strip says Opus again", JS, "meta: (cost, by, title, model) => [title, model, cost, by]",
+     "meta: (cost, by, title, model) => [title, 'Opus', cost, by]"),
     ("usage is read in the Anthropic shape (zero tokens)", API, "usage = normalize_usage(getattr(response, \"usage\", None))",
-     "usage = normalize_usage(getattr(response, \"usage\", None), provider=PROVIDER)"),
+     "usage = normalize_usage(getattr(response, \"usage\", None), provider=route.get(\"provider\"))"),
     # reading the turn
     ("the store is opened writable", API, "        db = SessionDB(read_only=True)\n    except Exception as exc:  # noqa: BLE001 — a store that cannot open is an unreadable turn",
      "        db = SessionDB()\n    except Exception as exc:  # noqa: BLE001 — a store that cannot open is an unreadable turn"),
@@ -121,7 +140,7 @@ MUTATIONS = [
     ("feedback accepts any check_at", API, "        raise HTTPException(status_code=400, detail=\"check_at must be a positive number\")\n", ""),
     ("the prompt no longer asks for a headline", API, '"headline": "<the point as a headline, in that language>", ', ""),
     ("the prompt loses the headline rule", API, "short newspaper headline: at most 60 characters, no final full stop", "short headline"),
-    ("the response loses at", API, '"chars": chars, "at": at, "title": title}', '"chars": chars, "title": title}'),
+    ("the response loses at", API, '"chars": chars, "at": at, "title": title,', '"chars": chars, "title": title,'),
     ("the error message (with secrets) reaches the screen", API, 'detail=f"model call failed ({type(exc).__name__})"', 'detail=f"model call failed ({exc})"'),
     ("the ledger keeps a point's text", API, '"kinds": [p["kind"] for p in points]', '"kinds": [p["kind"] for p in points], "texts": [p["text"] for p in points]'),
     ("a pricing failure loses the points", API, "    except Exception as exc:  # noqa: BLE001 — a missing price must not hide the points",

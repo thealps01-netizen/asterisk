@@ -1,17 +1,19 @@
 # Asterisk
 
 Asterisk is a Hermes plugin. After a long reply (3,000+ characters) in a chat you opened in the desktop app, a
-second model (Opus) rereads that whole turn — your message, the assistant's tool calls and their
+second model (the model you choose for it) rereads that whole turn — your message, the assistant's
+tool calls and their
 results, and the reply — and, only when there is one, names the one thing the reply did not plainly
 tell you: an unstated tradeoff, a result that may be off, a silent assumption, an understated
 irreversible step, a security risk or a cost, and who decided it (the assistant or you). It shows as a
 headline above the input that stays until you dismiss it. Most turns have nothing to flag; then
 nothing is shown.
 
-Each check costs about 5 cents: measured on 14 real turns from one user (2026-10-17), the mean was
-about $0.05 and the range about $0.02–0.08, against about $0.019 for 1.0.0 on the same turns. At ~15
-checks a day that is about $22 a month. Each check is recorded (without any text) in a ledger. See
-`Docs/asterisk-notes.md` for how it works, the cost and the review.
+Each check costs about 5 cents on `claude-opus-5-5`: measured on 14 real turns from one user
+(2026-10-17), the mean was about $0.05 and the range about $0.02–0.08, against about $0.019 for 1.0.0
+on the same turns. At ~15 checks a day that is about $22 a month. Other models are not measured: the
+cost and the quality of the points on them are unknown. Each check is recorded (without any text) in
+a ledger. See `Docs/asterisk-notes.md` for how it works, the cost and the review.
 
 ## Layout
 
@@ -32,14 +34,19 @@ app, no terminal:
 2. Paste `https://github.com/thealps01-netizen/asterisk`.
 3. Click **Review repository**, then **Install**.
 4. On Hermes v0.21.6 only: switch on the Desktop half of the Asterisk row if it is off.
+5. Choose the model Asterisk checks with: Settings → Models → Auxiliary models → the Asterisk row →
+   Change (or Set to main). Until then it checks nothing and says so once per app start.
 
 In a terminal instead: `hermes plugins install thealps01-netizen/asterisk --enable`, then switch on
-the Desktop half in Capabilities → Plugins.
+the Desktop half in Capabilities → Plugins, then choose the model as in step 5.
 
 ## Update
 
 Capabilities → Plugins → the Asterisk row's **Update** button (shown when a newer commit is on
 GitHub). An install pinned to a commit updates only by installing again with a new pin.
+
+From 3.0.0: choose a model once as in Install step 5; 3.0.0 always used `claude-opus-5-5` on
+`anthropic`.
 
 ## Upgrading from 2.x (You Should Know)
 
@@ -80,7 +87,9 @@ desktop app (`apps/desktop/dist`), starts no app, and is not a gate.
 the latest long-reply turns of sessions you name, and writes a markdown with both answers, their cost
 and a "useful / noise" box per point for you to tick.
 
-- A live run spends money: two Opus calls per turn. Nothing runs it on its own — not CI, not an agent.
+- A live run spends money: one Opus call (1.0.0) and one call on the model chosen for Asterisk per
+  turn. Nothing runs it on its own — not CI, not an agent. With no model chosen for Asterisk it stops
+  before any call.
 - `--dry-run` calls no model and writes nothing; it prints each turn's sizes and an estimate of the
   input tokens. Start there.
 - Run it from the repository root with any Python that can start Hermes (the Hermes venv interpreter

@@ -1,5 +1,23 @@
 # Changelog
 
+## 4.0.0 (2026-10-17)
+
+- The model is yours to choose. Asterisk registers its own auxiliary task: an "Asterisk" row in
+  Settings → Models → Auxiliary models, where you pick the provider and model from your connected
+  accounts. The backend no longer names one (3.0.0 sent every check to `claude-opus-5-5` on
+  `anthropic`, whatever the user had).
+- Until a model is chosen on that row, Asterisk checks nothing: `/check` answers 409 "no model
+  chosen" before reading anything, and the desktop half says where to choose, once per app start.
+  It never falls back to your main model on its own; "Set to main" on the row is how to use it.
+  From 3.0.0: choose a model once (Opus 5.5 on Anthropic is what 3.0.0 used).
+- `POST /check` also returns `model`, the model that answered; the strip names it where it said
+  "Opus". Ledger lines gain `provider`, and `model` is the model that answered (a fallback
+  included); the cost is priced for it.
+- Cost and quality are measured only for `claude-opus-5-5` (about $0.05 a check). Other models are
+  not measured.
+- No change to what is checked, the prompt or the strip's look. The desktop half and the backend
+  must come from the same release.
+
 ## 3.0.0 (2026-10-17)
 
 - Renamed to Asterisk. Every identifier that carried the old name now says `asterisk`: the plugin

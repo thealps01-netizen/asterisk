@@ -21,10 +21,10 @@
  *      the reply's text. A frame without a receipt still posts, with turn: null (the backend's
  *      refusal becomes the error notice, never a silent skip).
  *   5. The strip: nothing when no note is pending; a point is a note, never a toast. One note: the
- *      label "Worth knowing", no number, headline, sentence, meta "Opus · <cost> · decided by ...",
+ *      label "Worth knowing", no number, headline, sentence, meta "<model> · <cost> · decided by ...",
  *      "Already knew" and "Got it" ("Open" only for another chat). Several notes: "Worth knowing ·
  *      N notes", numbered 1..N in arrival order; the focused chat's note expanded, the others one
- *      line "<title> · Opus <cost>" ("Untitled chat" without a title) with "Open".
+ *      line "<title> · <model> <cost>" ("Untitled chat" without a title) with "Open".
  *   6. Buttons: "Open" opens that note's own chat and keeps the note (it expands once that chat is
  *      focused); "Got it" removes only that note and posts nothing; "Already knew" removes it and
  *      posts /feedback { check_at } with that check's `at`; a failed /feedback is one named error
@@ -50,6 +50,10 @@
  *      an SDK without SESSION_ROW_AREAS (or without COMPOSER_AREAS) imports, and register does not
  *      throw, registers nothing, adds no listener, posts /status { desktop_ready: false } once and
  *      shows the update warning only when the answer says update_notice: true.
+ *  14. No model chosen: a /check failure naming "no model chosen" is one asterisk-no-model warning
+ *      with its copy, never the asterisk-error toast; a second one adds no notice; checking does not
+ *      stop, so the next reply is still posted (a model chosen mid-session works on the next reply).
+ *      A reply without `model` names no model and leaves no stray separator.
  *  REST counts in locks 1-12 count /check and /feedback calls only.
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
@@ -145,7 +149,7 @@ const listeners = new Map()
 const disposers = []
 const rest = [] // /check and /feedback calls; /status goes to statusCalls
 const statusCalls = []
-let reply = { points: [], cost_usd: 0.0213, cost_status: 'estimated', at: 1, title: null }
+let reply = { points: [], cost_usd: 0.0213, cost_status: 'estimated', model: 'fake-model-x', at: 1, title: null }
 let restFails = null
 const pet = { visible: false, said: [] }
 const ctx = {
@@ -238,7 +242,7 @@ check(rest.length === 0, 'a mirror frame is not sent')
 // 3/4/5. one note, in the focused chat
 const H1 = 'SQLite chosen over Postgres'
 reply = { points: [point(H1, 'The assistant chose SQLite over Postgres without saying it drops concurrent writes.')],
-  cost_usd: 0.0213, cost_status: 'estimated', at: 1000.5, title: 'Deploy plan' }
+  cost_usd: 0.0213, cost_status: 'estimated', model: 'fake-model-x', at: 1000.5, title: 'Deploy plan' }
 await emit('rt-1', frame('one', 10))
 const body1 = rest[0]?.[1]?.body
 check(rest.length === 1 && rest[0][0] === '/check' && rest[0][1]?.method === 'POST', 'a long reply of the focused chat is sent to POST /check')
@@ -258,7 +262,7 @@ check(text($(entries[0], '[data-asterisk="headline"]')) === H1 && text($(entries
 const stroke = $(entries[0], '[data-asterisk="stroke"]')
 check(stroke?.getAttribute('aria-hidden') === 'true' && stroke?.getAttribute('viewBox') === '0 0 200 8' && stroke?.getAttribute('preserveAspectRatio') === 'none'
   && stroke?.querySelector('path')?.getAttribute('d') === 'M2 5 C 40 2, 80 7, 120 4 S 180 3, 198 5', 'the headline is underlined by the hidden SVG stroke')
-check(text($(entries[0], '[data-asterisk="meta"]')) === 'Opus · ~$0.02 · decided by assistant', `meta: Opus, the cost, who decided (${text($(entries[0], '[data-asterisk="meta"]'))})`)
+check(text($(entries[0], '[data-asterisk="meta"]')) === 'fake-model-x · ~$0.02 · decided by assistant', `meta: the model that answered, the cost, who decided (${text($(entries[0], '[data-asterisk="meta"]'))})`)
 check(same(buttons(strip.el), ['Already knew', 'Got it']) && $$(strip.el, 'button').every(b => b.getAttribute('type') === 'button'),
   `the focused chat's note offers "Already knew" and "Got it", no "Open" (${buttons(strip.el)})`)
 check(pet.said.length === 0, 'no pet on screen -> nothing is said')
@@ -279,14 +283,14 @@ await act(async () => {
   stub.host.state.focusedSessionId.set('rt-2')
   await settle()
 })
-reply = { points: [], cost_usd: 0.01, cost_status: 'estimated', at: 1500, title: null }
+reply = { points: [], cost_usd: 0.01, cost_status: 'estimated', model: 'fake-model-x', at: 1500, title: null }
 await emit('rt-1', frame('back', 15))
 check(rest.at(-1)?.[1]?.body?.session_id === 'st-1',
   `the stored atom set before the runtime one does not file the old chat under the new id (${rest.at(-1)?.[1]?.body?.session_id})`)
 await focus('rt-3', 'st-3')
 pet.visible = true
 reply = { points: [point('Old backups deleted', 'You asked to delete the old backups; the reply calls it a cleanup.', 'user', 'irreversible')],
-  cost_usd: 0.004, cost_status: 'estimated', at: 2000.25, title: null }
+  cost_usd: 0.004, cost_status: 'estimated', model: 'fake-model-x', at: 2000.25, title: null }
 await emit('rt-2', frame('two', 20))
 const body2 = rest.at(-1)?.[1]?.body
 check(body2?.session_id === 'st-2' && same(body2?.turn, receipt(20)),
@@ -294,7 +298,7 @@ check(body2?.session_id === 'st-2' && same(body2?.turn, receipt(20)),
 check(pet.said.length === 1 && pet.said[0][0] === 'Worth knowing: a note above the input' && pet.said[0][1]?.tone === 'info',
   `with a pet on screen it points to the strip (${JSON.stringify(pet.said)})`)
 reply = { points: [point('Release tag pushed', 'The assistant pushed the release tag before the tests finished.')],
-  cost_usd: 0.0412, cost_status: 'estimated', at: 3000.75, title: 'Release notes' }
+  cost_usd: 0.0412, cost_status: 'estimated', model: 'fake-model-x', at: 3000.75, title: 'Release notes' }
 await emit('rt-3', frame('three', 30))
 s = $(strip.el, '[data-asterisk="strip"]')
 entries = $$(strip.el, '[data-asterisk="entry"]')
@@ -303,11 +307,11 @@ check(s?.getAttribute('data-count') === '3' && text($(s, '[data-asterisk="label"
 check(same($$(s, '[data-asterisk="num"]').map(text), ['1', '2', '3']) && same(entries.map(e => text($(e, '[data-asterisk="headline"]'))), [H1, 'Old backups deleted', 'Release tag pushed']),
   'numbered 1, 2, 3 in arrival order')
 check(entries[2].getAttribute('data-expanded') === 'true' && text($(entries[2], '[data-asterisk="text"]')).startsWith('The assistant pushed')
-  && text($(entries[2], '[data-asterisk="meta"]')) === 'Opus · ~$0.04 · decided by assistant' && same(buttons(entries[2]), ['Already knew', 'Got it']),
+  && text($(entries[2], '[data-asterisk="meta"]')) === 'fake-model-x · ~$0.04 · decided by assistant' && same(buttons(entries[2]), ['Already knew', 'Got it']),
   `the focused chat's note is expanded (${text($(entries[2], '[data-asterisk="meta"]'))})`)
-check(entries[0].getAttribute('data-expanded') === 'false' && !$(entries[0], '[data-asterisk="text"]') && text($(entries[0], '[data-asterisk="meta"]')) === 'Deploy plan · Opus ~$0.02'
-  && same(buttons(entries[0]), ['Open']), `another chat's note is one line "<title> · Opus <cost>" and "Open" (${text($(entries[0], '[data-asterisk="meta"]'))})`)
-check(text($(entries[1], '[data-asterisk="meta"]')) === 'Untitled chat · Opus <$0.01' && same(buttons(entries[1]), ['Open']),
+check(entries[0].getAttribute('data-expanded') === 'false' && !$(entries[0], '[data-asterisk="text"]') && text($(entries[0], '[data-asterisk="meta"]')) === 'Deploy plan · fake-model-x ~$0.02'
+  && same(buttons(entries[0]), ['Open']), `another chat's note is one line "<title> · <model> <cost>" and "Open" (${text($(entries[0], '[data-asterisk="meta"]'))})`)
+check(text($(entries[1], '[data-asterisk="meta"]')) === 'Untitled chat · fake-model-x <$0.01' && same(buttons(entries[1]), ['Open']),
   `a note without a title shows "Untitled chat" (${text($(entries[1], '[data-asterisk="meta"]'))})`)
 check(same(dots(), { 'st-1': 1, 'st-2': 1, 'st-3': 1, 'st-4': 0, 'st-5': 0 }) && $$(rows['st-2'].el, '[data-asterisk="dot"]')[0]?.getAttribute('aria-label') === 'Worth knowing: a note waiting'
   && $$(rows['st-2'].el, '[data-asterisk="dot"]')[0]?.getAttribute('title') === 'Worth knowing: a note waiting',
@@ -341,7 +345,7 @@ check(stub.calls.opened.at(-1) === 'st-1' && $$(strip.el, '[data-asterisk="entry
 await focus('rt-1', 'st-1')
 entries = $$(strip.el, '[data-asterisk="entry"]')
 check(entries[0].getAttribute('data-expanded') === 'true' && entries[2].getAttribute('data-expanded') === 'false'
-  && text($(entries[2], '[data-asterisk="meta"]')) === 'Release notes · Opus ~$0.04', 'once that chat is focused its note is expanded, the others collapse')
+  && text($(entries[2], '[data-asterisk="meta"]')) === 'Release notes · fake-model-x ~$0.04', 'once that chat is focused its note is expanded, the others collapse')
 
 // 6. Got it
 let posts = rest.length
@@ -360,7 +364,7 @@ check(rest.length === posts + 1 && rest.at(-1)[0] === '/feedback' && rest.at(-1)
   && $$(strip.el, '[data-asterisk="entry"]').length === 1, `"Already knew" removes the note and posts /feedback { check_at } with its check's at (${JSON.stringify(rest.at(-1))})`)
 entries = $$(strip.el, '[data-asterisk="entry"]')
 check(text($(strip.el, '[data-asterisk="label"]')) === 'Worth knowing' && $$(strip.el, '[data-asterisk="num"]').length === 0
-  && text($(entries[0], '[data-asterisk="meta"]')) === 'Release notes · Opus · ~$0.04 · decided by assistant' && same(buttons(entries[0]), ['Already knew', 'Open', 'Got it']),
+  && text($(entries[0], '[data-asterisk="meta"]')) === 'Release notes · fake-model-x · ~$0.04 · decided by assistant' && same(buttons(entries[0]), ['Already knew', 'Open', 'Got it']),
   `a single note of another chat is expanded, names its chat and offers "Open" (${text($(entries[0], '[data-asterisk="meta"]'))} | ${buttons(entries[0])})`)
 collect(strip.el)
 restFails = 'network down'
@@ -375,12 +379,12 @@ check(strip.el.innerHTML === '' && ROWS.every(id => rows[id].el.innerHTML === ''
 // 10. errors
 const toasts = stub.calls.notify.length
 restFails = null
-reply = { points: [{ kind: 'cost', by: 'user', text: 'No headline here.' }], cost_usd: 0.02, cost_status: 'estimated', at: 4000, title: 'X' }
+reply = { points: [{ kind: 'cost', by: 'user', text: 'No headline here.' }], cost_usd: 0.02, cost_status: 'estimated', model: 'fake-model-x', at: 4000, title: 'X' }
 await emit('rt-3', frame('four', 40))
 n = stub.calls.notify.at(-1)
 check(stub.calls.notify.length === toasts + 1 && n?.id === 'asterisk-error' && n?.message === 'Could not check a long reply: the answer has no headline'
   && strip.el.innerHTML === '', `a point without a headline is one error toast and no note (${n?.message})`)
-reply = { points: [], cost_usd: 0.02, cost_status: 'estimated', at: 4001, title: null }
+reply = { points: [], cost_usd: 0.02, cost_status: 'estimated', model: 'fake-model-x', at: 4001, title: null }
 await emit('rt-3', frame('five', 50))
 check(strip.el.innerHTML === '' && stub.calls.notify.length === toasts + 1, 'nothing to flag -> no note, no toast')
 restFails = 'model call failed (APITimeoutError)'
@@ -397,13 +401,44 @@ check(body3?.session_id === 'st-3' && 'turn' in body3 && body3.turn === null, `a
 n = stub.calls.notify.at(-1)
 check(n?.kind === 'error' && n?.message === 'Could not check a long reply: turn ids missing or malformed', `the refusal is the error toast, never a silent skip (${n?.message})`)
 restFails = null
+// 14. no model chosen for Asterisk: one warning per app start, never the error toast, later replies still posted
+const NO_MODEL = 'Asterisk has no model chosen, so it checks no reply. It does not use your main model on its own. Choose one in Settings → Models → Auxiliary models → Asterisk (Change, or Set to main).'
+console.warn = () => {}
+const beforeNoModel = stub.calls.notify.length
+restFails = '409: {"detail":"no model chosen"}'
+await emit('rt-3', frame('no model 1', 70))
+let added = stub.calls.notify.slice(beforeNoModel)
+check(added.length === 1 && added[0].id === 'asterisk-no-model' && added[0].kind === 'warning' && added[0].title === 'Asterisk'
+  && added[0].message === mod.t('asterisk.noModel') && added[0].message === NO_MODEL && !added.some(x => x.id === 'asterisk-error'),
+  `14. a "no model chosen" refusal is one asterisk-no-model warning with its copy, not the error toast (${JSON.stringify(added)})`)
+await emit('rt-3', frame('no model 2', 80))
+added = stub.calls.notify.slice(beforeNoModel)
+check(added.length === 1 && rest.at(-1)?.[0] === '/check' && rest.at(-1)?.[1]?.body?.turn?.row_ids?.[0] === 80,
+  `14. a second "no model chosen" refusal is posted but adds no notice (${added.length} notices)`)
+restFails = null
+const postsNoModel = rest.length
+reply = { points: [point('Chosen mid-session', 'The assistant kept the old schema without saying the migration was skipped.')],
+  cost_usd: 0.0213, cost_status: 'estimated', at: 4100, title: 'Later chat' }
+await emit('rt-3', frame('no model 3', 90))
+console.warn = warn
+check(rest.length === postsNoModel + 1 && rest.at(-1)?.[0] === '/check' && rest.at(-1)?.[1]?.body?.turn?.row_ids?.[0] === 90,
+  `14. the next reply after a "no model chosen" refusal is still posted to /check (${rest.length - postsNoModel} posts)`)
+const laterMeta = text($(strip.el, '[data-asterisk="meta"]'))
+check(laterMeta === 'Later chat · ~$0.02 · decided by assistant', `a reply without model shows no model and no stray separator (${laterMeta})`)
+await click(button(strip.el, 'Got it'))
+check(strip.el.innerHTML === '', 'that note dismissed, the strip is gone')
 check(mod.fmtCost(null, 'unknown') === '' && mod.fmtCost(0.7, 'unknown') === '' && mod.fmtCost(0, 'included') === 'subscription' && mod.fmtCost(0.38, 'actual') === '$0.38',
   'cost text: unpriced is empty even with an amount stored, subscription named, billed as is')
 const unpriced = mod.noteFor({ points: [point('H', 'T')], cost_usd: null, cost_status: 'unknown', at: 5 }, { key: 'k', storedId: 'st-9' })
-check(unpriced?.cost === '' && mod.t('asterisk.meta', '', 'decided by you', '') === 'Opus · decided by you' && mod.t('asterisk.from', 'Chat', '') === 'Chat · Opus',
+check(unpriced?.cost === '' && unpriced?.model === '' && mod.t('asterisk.meta', '', 'decided by you', '', 'fake-model-x') === 'fake-model-x · decided by you'
+  && mod.t('asterisk.from', 'Chat', '', 'fake-model-x') === 'Chat · fake-model-x',
   'an unpriced check names no cost, never $0')
-check(mod.noteFor({ points: [], at: 1 }, { key: 'k' }) === null && same(Object.keys(unpriced).sort(), ['by', 'checkAt', 'cost', 'headline', 'id', 'storedId', 'text', 'title']),
-  'no points -> no note; a note is { id, storedId, title, headline, text, by, cost, checkAt }')
+check(mod.t('asterisk.meta', '', 'decided by you', '', '') === 'decided by you' && mod.t('asterisk.from', 'Chat', '', '') === 'Chat'
+  && mod.t('asterisk.from', 'Chat', '~$0.02', '') === 'Chat · ~$0.02' && mod.t('asterisk.meta', '~$0.02', 'decided by you', 'Chat', '') === 'Chat · ~$0.02 · decided by you',
+  'without a model the meta and the one-line note name no model and leave no stray separator')
+check(mod.noteFor({ points: [], at: 1 }, { key: 'k' }) === null && same(Object.keys(unpriced).sort(), ['by', 'checkAt', 'cost', 'headline', 'id', 'model', 'storedId', 'text', 'title'])
+  && mod.noteFor({ points: [point('H', 'T')], model: 'fake-model-x', at: 5 }, { key: 'k' })?.model === 'fake-model-x',
+  'no points -> no note; a note is { id, storedId, title, headline, text, by, cost, model, checkAt }')
 
 // 9. no asterisk
 const GLYPHS = /[\u2042\u204E\u2051\u2217\u2722-\u2727\u2731-\u273D\u2749-\u274B\uFE61\uFF0A]/u
