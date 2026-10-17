@@ -1,9 +1,16 @@
 """You Should Know — offline evaluation: the 1.0.0 checker (reply only, up to three points) against the
 turn-aware checker (the whole turn, one point or none), on real past turns of chosen sessions.
 
-Run with the Hermes venv interpreter (it has the core and FastAPI on its path):
-  python eval/compare_checkers.py --session <stored id> [--session ...] [--turns 3]
+Run from the repository root with any Python that can start Hermes (the Hermes venv interpreter does):
+  python eval/compare_checkers.py --session <stored id> [--session ...] [--turns 3] [--core <checkout>]
                                   [--old <1.0.0 plugin_api.py>] [--out <file.md>] [--dry-run]
+
+Its first step is Hermes' own start-up: it finds the core checkout (--core, HERMES_CORE, or
+<HERMES_HOME>/hermes-agent — the convention tests/contract_core.py uses), puts it first on sys.path
+and imports hermes_bootstrap, before it loads any plugin code. The bootstrap activates the core's
+dependencies (FastAPI among them) and may relaunch this script under Hermes' managed runtime; the
+relaunched run prints the output. Without this, an old editable install in the venv misses newer core
+modules, and the backend's FastAPI import fails before the dependencies are active.
 
 A LIVE run spends money: two Opus calls per turn (old and new). It is never run by CI or by an agent
 on its own. `--dry-run` calls no model, needs no network and writes no file: it prints each turn's
@@ -19,7 +26,9 @@ Neither checker's check() is called, so the plugin's ledger is never written.
 from __future__ import annotations
 
 import argparse
+import importlib
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
@@ -31,6 +40,24 @@ REPO = Path(__file__).resolve().parent.parent
 NEW_API = REPO / "dashboard" / "plugin_api.py"
 STORE_LIMIT = 2000
 CHARS_PER_TOKEN = 2.5
+
+
+def default_core() -> Path:
+    """The core checkout, found as tests/contract_core.py finds it."""
+    if os.environ.get("HERMES_CORE"):
+        return Path(os.environ["HERMES_CORE"])
+    base = Path(os.environ["HERMES_HOME"]) if os.environ.get("HERMES_HOME") else (
+        Path(os.environ["LOCALAPPDATA"]) / "hermes" if os.environ.get("LOCALAPPDATA") else Path.home() / ".hermes")
+    return base / "hermes-agent"
+
+
+def bootstrap(core: Path) -> None:
+    """Start the core the way Hermes' entry points do: its root first on sys.path, then hermes_bootstrap
+    (which may relaunch this script under the managed runtime and exit with the child's status)."""
+    if not (core / "hermes_bootstrap.py").is_file():
+        raise SystemExit(f"compare_checkers: no Hermes core at {core}; pass --core or set HERMES_CORE")
+    sys.path.insert(0, str(core))
+    importlib.import_module("hermes_bootstrap")
 
 
 def load(path: Path, name: str):
@@ -151,8 +178,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--old", type=Path, help="a 1.0.0 plugin_api.py (default: v1.0.0 from this repo)")
     parser.add_argument("--out", type=Path, help="the markdown to write (default under HERMES_HOME)")
     parser.add_argument("--dry-run", action="store_true", help="no model, no network, no file: print sizes only")
+    parser.add_argument("--core", type=Path, default=default_core(),
+                        help="the Hermes core checkout (default: HERMES_CORE, else <HERMES_HOME>/hermes-agent)")
     args = parser.parse_args(argv)
 
+    bootstrap(args.core)
     new = load(NEW_API, "ysk_eval_new")
     out = args.out or (new._home() / "state" / new.PLUGIN_ID / "eval" / f"compare-{time.strftime('%Y%m%d-%H%M%S')}.md")
     if out.resolve().is_relative_to(REPO):

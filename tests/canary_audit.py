@@ -89,6 +89,12 @@ MUTATIONS = [
     ("the prompt stops saying no point is the normal answer", API, "- Most turns have nothing to flag. Then return no point; that is the normal answer.\n", ""),
     ("the prompt loses 'Never restate what the reply already says clearly'", API,
      "- Never restate what the reply already says clearly. If the reply says it, it is not a point.\n", ""),
+    ("the language rule after the turn is dropped", API, ' + "\\n\\n" + LANGUAGE_RULE}]', "}]"),
+    ("a point that does not name its language is accepted", API,
+     '        if not isinstance(language, str) or not language.strip():\n            raise ValueError("a point that does not name the reply\'s language")\n', ""),
+    # the evaluation script
+    ("the eval loads the backend before Hermes' bootstrap", "eval/compare_checkers.py",
+     '    bootstrap(args.core)\n    new = load(NEW_API, "ysk_eval_new")\n', '    new = load(NEW_API, "ysk_eval_new")\n    bootstrap(args.core)\n'),
     # docs and CI
     ("the total cap changes without the notes", API, "MAX_TURN_CHARS = 32000", "MAX_TURN_CHARS = 30000"),
     ("CI runs the paid evaluation", CI, "        run: python canary_audit.py",
