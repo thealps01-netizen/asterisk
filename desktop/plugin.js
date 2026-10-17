@@ -1,17 +1,20 @@
 /**
- * You Should Know — lifts what a long reply must not let slip into a notice the user cannot miss.
+ * You Should Know — names the one thing a long reply did not plainly tell the user, if there is one.
  *
  * When a reply of a chat the user has opened in this app finishes (`message.complete`, status
- * complete, a new reply, at least MIN_CHARS long), the backend asks a second model (Opus) what in it
- * the user must not miss: a cost, an irreversible step, a security risk, an action of theirs, an
- * assumption, a deadline. Nothing to flag -> nothing shown (the common case). Otherwise one warning
- * notice that stays until dismissed: the first point as its message, the others as its detail, what
- * the check cost as its meta, and "Open chat" when the reply is not in the focused chat. With a
- * Hermes pet on screen it also says so in its bubble.
+ * complete, a new reply, at least MIN_CHARS long), the plugin sends the backend that chat's stored id
+ * and the frame's `persisted_turn` receipt (the turn's committed row ids). The backend reads that
+ * whole turn — the user's message, the assistant's tool calls and their results, the final reply —
+ * and a second model (Opus) returns one point or none: an unstated tradeoff, a result that may be
+ * off, a silent assumption, an understated irreversible step, a security risk or a cost, saying who
+ * decided it (the assistant or the user). Nothing to flag -> nothing shown (the normal case).
+ * Otherwise one warning notice that stays until dismissed: the point as its message, what the check
+ * cost as its meta, and "Open chat" when the reply is not in the focused chat. With a Hermes pet on
+ * screen it also says so in its bubble.
  *
  * Each reply is checked once. A failed check is one error notice, named, never swallowed.
  * The plugin draws nothing of its own and writes nothing: the backend keeps a cost ledger with no
- * reply text in it (see Docs/you-should-know-notes.md).
+ * text in it (see Docs/you-should-know-notes.md).
  */
 import { host } from '@hermes/plugin-sdk'
 
@@ -24,12 +27,12 @@ const en = {
   ysk: {
     title: 'You should know',
     kind: {
-      cost: 'Cost',
+      tradeoff: 'Tradeoff',
+      result: 'Result may be off',
+      assumption: 'Assumption',
       irreversible: 'Cannot be undone',
       security: 'Security',
-      action: 'Your move',
-      assumption: 'Assumption',
-      deadline: 'Deadline'
+      cost: 'Cost'
     },
     point: (kind, text) => `${kind}: ${text}`,
     meta: cost => (cost ? `Checked by Opus · ${cost}` : 'Checked by Opus'),
@@ -81,7 +84,6 @@ export function noticeFor(result, { key, storedId, focusedStoredId, open }) {
     kind: 'warning',
     title: t('ysk.title'),
     message: line(points[0]),
-    detail: points.slice(1).map(p => `• ${line(p)}`).join('\n') || undefined,
     meta: t('ysk.meta', fmtCost(result.cost_usd, result.cost_status)),
     action: away ? { label: t('ysk.open'), onClick: () => open(storedId) } : undefined
   }
@@ -122,7 +124,10 @@ export function createWatcher(ctx, hostApi = host) {
     remember(checked, key, true, CHECKED_MAX)
     let result
     try {
-      result = await ctx.rest('/check', { method: 'POST', body: { text: payload.text } })
+      // The reply's OWN chat (not necessarily the focused one) and the turn's receipt. A missing one is
+      // still sent: the backend's refusal becomes the error notice, never a silent skip.
+      const body = { session_id: seen.get(sid) || null, turn: payload.persisted_turn || null }
+      result = await ctx.rest('/check', { method: 'POST', body })
     } catch (err) {
       const detail = String(err?.message || err)
       console.warn(`[${ID}] check failed`, err)
