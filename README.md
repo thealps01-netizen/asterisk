@@ -5,7 +5,8 @@ second model (Opus) rereads that whole turn — your message, the assistant's to
 results, and the reply — and, only when there is one, names the one thing the reply did not plainly
 tell you: an unstated tradeoff, a result that may be off, a silent assumption, an understated
 irreversible step, a security risk or a cost, and who decided it (the assistant or you). It shows as a
-notice that stays until you dismiss it. Most turns have nothing to flag; then nothing is shown.
+headline above the input that stays until you dismiss it. Most turns have nothing to flag; then
+nothing is shown.
 
 Each check costs about 5 cents: measured on 14 real turns from one user (2026-10-17), the mean was
 about $0.05 and the range about $0.02–0.08, against about $0.019 for 1.0.0 on the same turns. At ~15
@@ -16,8 +17,8 @@ checks a day that is about $22 a month. Each check is recorded (without any text
 
 | Path | What |
 |---|---|
-| `desktop/plugin.js` | Desktop half: picks replies, calls the backend, shows the notice |
-| `dashboard/plugin_api.py` | Backend: `POST /check`, reading the turn, redaction and caps, the model call, the ledger |
+| `desktop/plugin.js` | Desktop half: picks replies, calls the backend, shows the headline strip above the input and the sidebar dot |
+| `dashboard/plugin_api.py` | Backend: `POST /check`, `POST /feedback`, reading the turn, redaction and caps, the model call, the ledger |
 | `eval/compare_checkers.py` | Offline evaluation: 1.0.0 against this checker on past turns (opt-in, below) |
 | `plugin.yaml`, `dashboard/manifest.json`, `__init__.py` | Hermes plugin metadata |
 | `tests/` | Gates (below) |
@@ -33,7 +34,8 @@ Needs Hermes v0.21.6 or later (its `message.complete` frames carry the turn's ro
 
 ## Gates
 
-Run from `tests/`; every one exits 0 when it passes.
+Run from `tests/`; every one exits 0 when it passes. Run `npm ci` in `tests/` once first: the desktop
+half is rendered with real React and jsdom, pinned to the core desktop app's versions.
 
 | Gate | Command |
 |---|---|
@@ -43,9 +45,14 @@ Run from `tests/`; every one exits 0 when it passes.
 | Core contract | `python contract_core.py` and `python contract_core.py --selftest` |
 | Canary | `python canary_audit.py` |
 
-`check_api.py` needs FastAPI (the Hermes venv has it) and calls no model. `contract_core.py` reads a
-Hermes checkout (`--core`, `HERMES_CORE`, or `<HERMES_HOME>/hermes-agent`). CI runs every gate on
-Ubuntu and Windows against a pinned core revision (`CORE_SHA` in `.github/workflows/ci.yml`).
+`check_api.py` needs FastAPI (the Hermes venv has it) and calls no model. `contract_core.py` and
+`audit_static.py` read a Hermes checkout (`--core`, `HERMES_CORE`, or `<HERMES_HOME>/hermes-agent`).
+CI runs every gate on Ubuntu and Windows against a pinned core revision (`CORE_SHA` in
+`.github/workflows/ci.yml`).
+
+For a reviewer's eyes, `node preview_strip.mjs` writes light and dark previews of the strip
+(`tests/.out/preview/{nous,everforest}-{light,dark}.html`) in the app's own CSS. It needs a built core
+desktop app (`apps/desktop/dist`), starts no app, and is not a gate.
 
 ## Offline evaluation
 

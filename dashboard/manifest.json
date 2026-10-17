@@ -2,6 +2,6 @@
   "name": "you-should-know",
   "label": "You Should Know",
   "description": "After a long reply, a second model (Opus) rereads the turn and names the one thing the reply did not plainly tell you; nothing to flag, nothing shown.",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "api": "plugin_api.py"
 }

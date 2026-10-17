@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.1.0 (2026-10-17)
+
+- The "Worth knowing" headline strip above the input replaces the warning toast: the point as a
+  short headline in a serif, underlined by a stroke in the theme's accent, with its sentence, the
+  check's cost and who decided, and "Already knew" / "Got it". A note stays until one of the two
+  removes it.
+- Several notes show as a numbered list in arrival order: the focused chat's note expanded, each
+  other one a single line with its chat's title, the cost and "Open" (opens that chat, keeps the note).
+- A dot in the theme's accent on the sidebar row of every chat with a pending note.
+- Colours come from the app's theme tokens only (accent, text, strokes), so the strip follows the
+  theme in light and dark. Reduced motion: no stroke drawing and no stagger.
+- The answer gains a `headline` field (asked at most 60 characters, kept at most 80); a point without
+  one is an unreadable answer, never shown.
+- `POST /check` also returns the check's `at` and the chat's `title` (null when it cannot be read).
+- `POST /feedback {check_at}` records "Already knew" as an `already_knew` ledger line with the check's
+  `at` and no text. "Got it" records nothing.
+- Pending notes live in memory only and are gone after a restart.
+- The desktop half and the backend must come from the same release.
+- `tests/package.json` pins React and jsdom to the core desktop app's versions: run `npm ci` in
+  `tests/` before the gates. `tests/preview_strip.mjs` writes light/dark previews for review (not a
+  gate).
+
 ## 2.0.0 (2026-10-17)
 
 - Reads the whole last turn, not the reply alone: the user's message, the assistant's tool calls and

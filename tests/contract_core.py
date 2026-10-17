@@ -20,6 +20,13 @@ Seams:
   store        hermes_state.SessionDB(db_path, read_only), close(), resolve_session_id,
                resolve_resume_session_id and get_messages(..., limit, latest, include_ancestors)
   redact       agent.redact.redact_sensitive_text(text, *, force, ..., redact_url_credentials)
+  areas        COMPOSER_AREAS.top is 'composer.top', the composer renders that slot, and a slot mounts
+               a contribution's render as a component
+  rowslot      SESSION_ROW_AREAS.trailing is 'sessionRow.trailing' with data.render({ sessionId }),
+               called per sidebar row with the row's stored (lineage-root) id
+  sdkui        the SDK exports COMPOSER_AREAS, SESSION_ROW_AREAS, usePluginI18n, useValue (nanostores'
+               useStore) and atom; ctx.register(contribution) returns its disposer
+  title        SessionDB has get_session_title(session_id) (SessionTitlesMixin)
 """
 from __future__ import annotations
 
@@ -43,6 +50,13 @@ FILES = {
     "messages": "hermes_state_messages.py",
     "sessions": "hermes_state_sessions.py",
     "redact": "agent/redact.py",
+    "composer_contrib": "apps/desktop/src/app/chat/composer/contrib.ts",
+    "composer": "apps/desktop/src/app/chat/composer/index.tsx",
+    "slot": "apps/desktop/src/contrib/react/slot.tsx",
+    "rowslots": "apps/desktop/src/lib/session-row-slots.ts",
+    "rowslot_view": "apps/desktop/src/app/chat/sidebar/session-row-slots.tsx",
+    "row": "apps/desktop/src/app/chat/sidebar/session-row.tsx",
+    "titles": "hermes_state_titles.py",
 }
 
 SEAMS: dict[str, list[tuple[str, str]]] = {
@@ -87,6 +101,21 @@ SEAMS: dict[str, list[tuple[str, str]]] = {
               ("sessions", r"^\s+def resolve_session_id\(self, session_id_or_prefix: str\) -> Optional\[str\]:$")],
     "redact": [("redact", r"^def redact_sensitive_text\(text: str, \*, force: bool = False,"),
                ("redact", r"^\s+redact_url_credentials: bool = False\) -> str:$")],
+    "areas": [("composer_contrib", r"^\s+top: 'composer\.top',?$"),
+              ("composer", r"<ContribSlot area=\{COMPOSER_AREAS\.top\} />"),
+              ("slot", r"\{c\.render && <ContribRender render=\{c\.render\} />\}")],
+    "rowslot": [("rowslots", r"^\s+trailing: 'sessionRow\.trailing'"),
+                ("rowslots", r"^\s+render: \(props: SessionRowSlotProps\) => ReactNode$"),
+                ("rowslot_view", r"render\(\{ sessionId \}\)"),
+                ("row", r"<SessionRowSlot area=\{SESSION_ROW_AREAS\.trailing\} sessionId=\{sessionPinId\(session\)\} />")],
+    "sdkui": [("sdk", r"^\s+COMPOSER_AREAS,$"),
+              ("sdk", r"^export \{ SESSION_ROW_AREAS\b"),
+              ("sdk", r"^\s+usePluginI18n$"),
+              ("sdk", r"^export \{ useStore as useValue \} from '@nanostores/react'$"),
+              ("sdk", r"^export \{ atom, computed \} from 'nanostores'$"),
+              ("ctx", r"^\s+register: \(c: PluginContribution\) => \(\) => void$")],
+    "title": [("titles", r"^\s+def get_session_title\(self, session_id: str\) -> Optional\[str\]:$"),
+              ("state", r"^class SessionDB\((?:[^)]|\n)*\bSessionTitlesMixin\b")],
 }
 
 

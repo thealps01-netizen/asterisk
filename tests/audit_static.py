@@ -3,10 +3,16 @@
 Run: python audit_static.py [--root <repo copy>]      (exit 0 = clean)
 
 Rules:
-  loader      every import specifier the desktop loader would scan is `@hermes/plugin-sdk` (the
-              loader rejects the whole plugin otherwise, and the plugin simply never appears)
-  surface     the desktop half registers no page, pane or nav row, and reaches no network or
-              storage of its own: its only doors are ctx.rest (its own backend) and host.notify
+  loader      every import specifier the desktop loader would scan is `@hermes/plugin-sdk` or
+              `react...` (the loader rejects the whole plugin otherwise, and the plugin simply never
+              appears)
+  surface     the desktop half registers exactly two contributions — `area: COMPOSER_AREAS.top`
+              and `area: SESSION_ROW_AREAS.trailing`, each once — and no pane, page or nav row; it
+              reaches no network or storage of its own: its only doors are ctx.rest (its own
+              backend), host.notify and host.openSession
+  theme       every var(--name) in desktop/plugin.js is a token the app declares (`--name:` in the
+              core's apps/desktop/src/styles.css; core from --core, HERMES_CORE or
+              <HERMES_HOME>/hermes-agent). A missing styles.css is a problem, never a skip.
   versions    plugin.yaml, dashboard/manifest.json and the top CHANGELOG heading name one version
   model       the model and the price floor the notes describe are the ones the backend uses
   caps        the notes state the total and the per-tool-result caps (MAX_TURN_CHARS,
@@ -25,9 +31,12 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-LOADER = re.compile(r"""(from\s*|import\s*\(\s*|import\s+)(['"])([^'"]+)\2""")
-FORBIDDEN = (r"\bfetch\(", r"XMLHttpRequest", r"localStorage", r"ctx\.storage", r"ctx\.register\(", r"\bpanes\b",
-             r"window\.hermesDesktop")
+# `from` / `import` as keywords only: `t('ysk.from', …)` or a `ysk-from` class is a string, not an import
+# (the desktop loader itself skips strings and comments).
+LOADER = re.compile(r"""(?<![\w.$-])(from\s*|import\s*\(\s*|import\s+)(['"])([^'"]+)\2""")
+FORBIDDEN = (r"\bfetch\(", r"XMLHttpRequest", r"localStorage", r"ctx\.storage", r"\bpanes\b", r"PANES_AREA",
+             r"registerSettingsPage", r"revealPane", r"window\.hermesDesktop")
+AREAS = ("COMPOSER_AREAS.top", "SESSION_ROW_AREAS.trailing")
 
 
 def hermes_home() -> Path:
@@ -38,7 +47,12 @@ def hermes_home() -> Path:
     return Path.home() / ".hermes"
 
 
-def audit(root: Path, installed: Path | None) -> list[str]:
+def default_core() -> Path:
+    """The same lookup as contract_core.default_core."""
+    return Path(os.environ["HERMES_CORE"]) if os.environ.get("HERMES_CORE") else hermes_home() / "hermes-agent"
+
+
+def audit(root: Path, installed: Path | None, core: Path) -> list[str]:
     problems: list[str] = []
     js = (root / "desktop" / "plugin.js").read_text(encoding="utf-8")
     api = (root / "dashboard" / "plugin_api.py").read_text(encoding="utf-8")
@@ -48,7 +62,18 @@ def audit(root: Path, installed: Path | None) -> list[str]:
             problems.append(f"loader: specifier {m.group(3)!r} — the loader would reject the whole plugin")
     for pattern in FORBIDDEN:
         if re.search(pattern, js):
-            problems.append(f"surface: {pattern} in desktop/plugin.js — the plugin's only doors are ctx.rest and host.notify")
+            problems.append(f"surface: {pattern} in desktop/plugin.js — the plugin's only doors are ctx.rest, host.notify and host.openSession")
+    areas = re.findall(r"\barea:\s*([^,}\s]+)", js)
+    if sorted(areas) != sorted(AREAS) or len(re.findall(r"\bctx\.register\(", js)) != 2:
+        problems.append(f"surface: the desktop half must register exactly {' and '.join(AREAS)}, each once (found {areas})")
+
+    styles = core / "apps" / "desktop" / "src" / "styles.css"
+    if not styles.is_file():
+        problems.append(f"theme: {styles} is missing — the theme tokens cannot be checked (point --core or HERMES_CORE at a core checkout)")
+    else:
+        declared = set(re.findall(r"(--[\w-]+)\s*:", styles.read_text(encoding="utf-8")))
+        for name in sorted(set(re.findall(r"var\(\s*(--[\w-]+)", js)) - declared):
+            problems.append(f"theme: var({name}) in desktop/plugin.js is not a token the app declares in styles.css")
 
     yaml_version = re.search(r"^version:\s*(\S+)", (root / "plugin.yaml").read_text(encoding="utf-8"), re.M)
     manifest = json.loads((root / "dashboard" / "manifest.json").read_text(encoding="utf-8"))
@@ -86,9 +111,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=HERE.parent)
     parser.add_argument("--no-installed", action="store_true", help="skip the installed-copy rule (canary copies)")
+    parser.add_argument("--core", type=Path, default=default_core(), help="the Hermes core checkout (for the theme rule)")
     args = parser.parse_args()
     installed = None if args.no_installed else hermes_home() / "desktop-plugins" / "you-should-know" / "plugin.js"
-    problems = audit(args.root.resolve(), installed)
+    problems = audit(args.root.resolve(), installed, args.core)
     for p in problems:
         print(f"PROBLEM  {p}")
     print(f"static audit: {'clean' if not problems else f'{len(problems)} problem(s)'}")

@@ -38,11 +38,25 @@ mod from the Claude Code mods video (2026-10), rebuilt on Hermes' own extension 
 6. The backend asks `claude-opus-5-5` on the `anthropic` provider through Hermes' auxiliary client
    (`call_llm`, task `you_should_know`, 700 output tokens, 90 s). The answer is strict JSON: no point,
    or one point with a kind (`tradeoff`, `result`, `assumption`, `irreversible`, `security`, `cost`),
-   `by` (`assistant` or `user`), the language of the final reply and one sentence in that language.
-   The prompt and most tool results are English, so the user message ends, after the turn, with the
-   rule to write in the final reply's language. Two points, an unknown kind, a missing `by` or a
-   missing language is an error, never trimmed and never read as "nothing to flag".
-7. One point becomes one warning notice (the app does not auto-dismiss warnings). No point, no notice.
+   `by` (`assistant` or `user`), the language of the final reply, a `headline` (the point as a short
+   newspaper headline: at most 60 characters asked, at most 80 kept, cut with `…`) and one sentence,
+   both in that language. The prompt and most tool results are English, so the user message ends,
+   after the turn, with the rule to write the headline and the point in the final reply's language.
+   Two points, an unknown kind, a missing `by`, a missing language or a missing headline is an error,
+   never trimmed and never read as "nothing to flag". With a point the backend also reads the chat's
+   title (read-only, `get_session_title`; null when it cannot be read, never an error) and returns it
+   with the check's `at`.
+7. One point becomes one note in the "Worth knowing" strip at the top of the composer
+   (`composer.top`). A single note shows its headline (serif, underlined by a stroke in the theme's
+   accent), its sentence, the cost and who decided, and "Already knew" / "Got it" (plus "Open" when
+   it belongs to another chat). Several notes are a numbered list in arrival order: the focused
+   chat's note is expanded, every other one is one line with its chat's title ("Untitled chat"
+   without one), the cost and "Open", which opens that chat and keeps the note. A note stays until
+   "Already knew" or "Got it" removes it; only "Already knew" is recorded (`POST /feedback`). The
+   sidebar row of a chat with a pending note carries a dot in the accent (`sessionRow.trailing`).
+   Notes live in memory only and are gone after a restart. Colours come from the app's theme tokens
+   only, so the strip follows the theme in light and dark; under reduced motion the stroke is shown
+   drawn and nothing animates. No point, no note. A failed check is still one error toast.
 
 ## Cost
 
@@ -68,25 +82,35 @@ Naming the provider when reading it would read the Anthropic shape and count zer
 `<HERMES_HOME>/state/you-should-know/ledger.jsonl`, one line per check: time, final reply length,
 model, input/output tokens, cost and its status, seconds, `points` (0 or 1), `kinds`, `by` (null,
 `assistant` or `user`), `turn_chars`, `tool_results`, `truncated`, and `turn_complete` (the receipt's
-own flag). Never any text: not the turn, not the reply, not the point. A failed call writes no line;
-an unreadable answer writes one with `"points": null, "error": "unreadable"`; a turn that could not be
-read writes `{at, model, "error": "turn_unreadable"}`. Lines written by 1.0.0 stay as they are.
+own flag). Never any text: not the turn, not the reply, not the point, its headline or the chat's
+title. A failed call writes no line; an unreadable answer writes one with `"points": null, "error":
+"unreadable"`; a turn that could not be read writes `{at, model, "error": "turn_unreadable"}`. Each
+"Already knew" writes `{at, "feedback": "already_knew", check_at}`, where `check_at` is the `at` of
+the check it answers. Lines written by 1.0.0 stay as they are.
 
 **Review after week two:** how many checks, the total cost, the share of checks with a point
 (expected to be a minority — most turns have nothing to flag), how many were `unreadable` or
-`turn_unreadable`, and whether the points were worth reading. For a side-by-side judgement, label an
+`turn_unreadable`, how many points got "Already knew" (`already_knew` lines against checks with a
+point), and whether the points were worth reading. For a side-by-side judgement, label an
 offline evaluation run (README → "Offline evaluation"): tick "useful" or "noise" per point. If the
 points are mostly noise, turn the plugin off — it is opt-in value, not a safety layer.
 
 ## What it does not do
 
-- It does not block, delay or rewrite the reply. It only adds a notice after.
+- It does not block, delay or rewrite the reply. It only adds a note above the input after.
 - It names the assistant's unstated choices (and the user's own, when the user asked for them); it
   does not grade the assistant or add advice of its own.
 - It reads the last turn only, never earlier turns, and no file beyond what the turn's tool results
   already contain. It does not read reasoning.
 - It is not a safety layer: a missed point is possible. The assistant's own rules (warnings first)
   stay the first line.
+
+## Known limits
+
+- A chat whose id context compression rotated may show no sidebar dot (the SDK has no way to match
+  the new id to its row); the strip still shows the note.
+- Every composer (split view) shows the same pending list: `composer.top` does not say which chat a
+  composer belongs to, so expansion follows the focused chat.
 
 ## Turning it off
 

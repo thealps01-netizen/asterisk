@@ -45,6 +45,10 @@ jobs:
       - name: Install the gate dependencies
         run: python -m pip install --quiet "fastapi==0.115.*"
 
+      - name: Desktop test dependencies (React and jsdom, pinned to the core desktop app's versions)
+        working-directory: tests
+        run: npm ci --no-audit --no-fund
+
       - name: Core sources for the contract (sparse, pinned)
         run: |
           set -euo pipefail
@@ -55,7 +59,11 @@ jobs:
           # MSYS_NO_PATHCONV: Git Bash on Windows would rewrite /agent/ into C:/Program Files/Git/agent/
           MSYS_NO_PATHCONV=1 git -C "$core" sparse-checkout set /tui_gateway/contracts/events.py /agent/auxiliary_client.py \
             /agent/usage_pricing.py /apps/desktop/src/store/notifications.ts /apps/desktop/src/sdk/index.ts /apps/desktop/src/contrib/plugin.ts \
-            /tui_gateway/prompt_turn.py /hermes_state.py /hermes_state_messages.py /hermes_state_sessions.py /agent/redact.py
+            /tui_gateway/prompt_turn.py /hermes_state.py /hermes_state_messages.py /hermes_state_sessions.py /agent/redact.py \
+            /apps/desktop/src/app/chat/composer/contrib.ts /apps/desktop/src/app/chat/composer/index.tsx \
+            /apps/desktop/src/contrib/react/slot.tsx /apps/desktop/src/lib/session-row-slots.ts \
+            /apps/desktop/src/app/chat/sidebar/session-row-slots.tsx /apps/desktop/src/app/chat/sidebar/session-row.tsx \
+            /hermes_state_titles.py /apps/desktop/src/styles.css
           for i in 1 2 3; do git -C "$core" fetch -q --depth 1 origin "$CORE_SHA" && break; sleep $((i*20)); done
           git -C "$core" checkout -q FETCH_HEAD
           test -f "$core/agent/auxiliary_client.py" || { echo "core sources missing"; exit 1; }

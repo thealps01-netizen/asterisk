@@ -155,7 +155,8 @@ def point_lines(points) -> list[str]:
     lines = []
     for p in points:
         who = f", by {p['by']}" if p.get("by") else ""
-        lines += [f"- **{p['kind']}**{who}: {p['text']}", "  - [ ] useful  - [ ] noise"]
+        head = f"{p['headline']} — " if p.get("headline") else ""
+        lines += [f"- **{p['kind']}**{who}: {head}{p['text']}", "  - [ ] useful  - [ ] noise"]
     return lines
 
 
