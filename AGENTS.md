@@ -1,7 +1,7 @@
-# AGENTS.md — you-should-know
+# AGENTS.md — asterisk
 
 Rules for anyone (person or coding agent) changing this repository. Build, test and release steps
-are in `README.md`; the design notes are in `Docs/you-should-know-notes.md`.
+are in `README.md`; the design notes are in `Docs/asterisk-notes.md`.
 
 ## `main` changes only through a green pull request
 
