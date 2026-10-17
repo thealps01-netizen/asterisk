@@ -1,10 +1,12 @@
 name: you-should-know
 label: You Should Know
-version: 1.0.0
+version: 2.0.0
 description: >-
   You Should Know — after a long reply (3,000+ characters) in a chat you opened, a second model
-  (Opus) reads the reply and lifts what you must not miss (cost, irreversible step, security,
-  your move, assumption, deadline) into a notice that stays until dismissed. Nothing to flag,
-  nothing shown. Keeps a cost ledger without reply text.
+  (Opus) rereads that turn — your message, the assistant's tool calls and results, and the reply —
+  and, only when there is one, names the one thing the reply did not plainly tell you: an unstated
+  tradeoff, a result that may be off, a silent assumption, an understated irreversible step, a
+  security risk or a cost, and who decided it. Nothing to flag, nothing shown. Keeps a cost ledger
+  without any text.
 author: Muhammed Enes Alpler
 kind: standalone
