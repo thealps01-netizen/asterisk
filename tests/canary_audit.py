@@ -1,4 +1,4 @@
-"""You Should Know — canary: break the plugin on purpose, one way at a time, and require a gate to fail.
+"""Asterisk — canary: break the plugin on purpose, one way at a time, and require a gate to fail.
 
 Run: python canary_audit.py      (exit 0 = every mutation was caught)
 
@@ -19,6 +19,7 @@ ROOT = HERE.parent
 JS = "desktop/plugin.js"
 API = "dashboard/plugin_api.py"
 CI = ".github/workflows/ci.yml"
+MANIFEST = "dashboard/manifest.json"
 
 MUTATIONS = [
     # which replies
@@ -34,7 +35,7 @@ MUTATIONS = [
     ("a point is also a toast", JS, "    notes.set([...notes.get(), note])\n",
      "    notes.set([...notes.get(), note])\n    hostApi.notify({ id: note.id, kind: 'warning', title: note.headline, message: note.text })\n"),
     ("an empty answer still shows a note", JS, "  if (!point) return null\n", "  if (!point) return { id: 'x', headline: 'x', text: 'x' }\n"),
-    ("a point without a headline is shown", JS, "  if (!filled(point.headline) || !filled(point.text)) throw new Error(t('ysk.noHeadline'))\n", ""),
+    ("a point without a headline is shown", JS, "  if (!filled(point.headline) || !filled(point.text)) throw new Error(t('asterisk.noHeadline'))\n", ""),
     ("the newest note comes first", JS, "notes.set([...notes.get(), note])", "notes.set([note, ...notes.get()])"),
     ("a single note is numbered", JS, "const numbered = list.length > 1", "const numbered = list.length > 0"),
     ("another chat's note is expanded", JS, "const expanded = !numbered || here", "const expanded = true"),
@@ -42,22 +43,22 @@ MUTATIONS = [
     ("'Open' opens the focused chat", JS, "const open = () => void host.openSession(note.storedId)",
      "const open = () => void host.openSession(host.state.focusedStoredSessionId.get())"),
     ("'Got it' removes every note", JS, "const dismiss = id => notes.set(notes.get().filter(n => n.id !== id))", "const dismiss = id => notes.set([])"),
-    ("'Got it' leaves the note", JS, "onClick: () => watcher.dismiss(note.id), children: t('ysk.gotIt')", "onClick: () => {}, children: t('ysk.gotIt')"),
+    ("'Got it' leaves the note", JS, "onClick: () => watcher.dismiss(note.id), children: t('asterisk.gotIt')", "onClick: () => {}, children: t('asterisk.gotIt')"),
     ("an asterisk glyph in the label", JS, "    label: 'Worth knowing',", "    label: 'Worth knowing \u2731',"),
-    ("a chat-widget variable replaces an app token", JS, ".ysk-label-name{color:var(--ui-accent)", ".ysk-label-name{color:var(--accent)"),
+    ("a chat-widget variable replaces an app token", JS, ".asterisk-label-name{color:var(--ui-accent)", ".asterisk-label-name{color:var(--accent)"),
     ("a third contribution area", JS, "    ctx.register({ id: 'dot',",
      "    ctx.register({ id: 'pane', area: 'panes', render: createStrip(watcher) })\n    ctx.register({ id: 'dot',"),
-    ("the stroke stays hidden under reduced motion", JS, "[data-motion=\"reduce\"] .ysk-stroke path{stroke-dashoffset:0}",
-     "[data-motion=\"reduce\"] .ysk-stroke path{stroke-dashoffset:400}"),
-    ("'Got it' is recorded as 'Already knew'", JS, "onClick: () => watcher.dismiss(note.id), children: t('ysk.gotIt')",
-     "onClick: () => void watcher.knew(note), children: t('ysk.gotIt')"),
+    ("the stroke stays hidden under reduced motion", JS, "[data-motion=\"reduce\"] .asterisk-stroke path{stroke-dashoffset:0}",
+     "[data-motion=\"reduce\"] .asterisk-stroke path{stroke-dashoffset:400}"),
+    ("'Got it' is recorded as 'Already knew'", JS, "onClick: () => watcher.dismiss(note.id), children: t('asterisk.gotIt')",
+     "onClick: () => void watcher.knew(note), children: t('asterisk.gotIt')"),
     ("'Already knew' records nothing", JS, "      await ctx.rest('/feedback', { method: 'POST', body: { check_at: note.checkAt } })\n", ""),
     ("'Already knew' sends the headline", JS, "body: { check_at: note.checkAt }", "body: { check_at: note.checkAt, headline: note.headline }"),
     ("a failed 'Already knew' is swallowed", JS, "      hostApi.notify({ id: `${ID}-feedback-error`", "      void ({ id: `${ID}-feedback-error`"),
-    ("a chat without a title shows nothing in its place", JS, "filled(note.title) ? note.title : t('ysk.untitled')", "note.title"),
+    ("a chat without a title shows nothing in its place", JS, "filled(note.title) ? note.title : t('asterisk.untitled')", "note.title"),
     ("the dot shows on every row", JS, "if (!sessionId || !list.some(n => n.storedId === sessionId)) return null", "if (!list.length) return null"),
     ("reduced motion still staggers", JS, "style: motion === 'full' ? { animationDelay", "style: true ? { animationDelay"),
-    ("the stroke draws under reduced motion", JS, "[data-motion=\"full\"] .ysk-stroke path{", ".ysk-stroke path{"),
+    ("the stroke draws under reduced motion", JS, "[data-motion=\"full\"] .asterisk-stroke path{", ".asterisk-stroke path{"),
     ("a hard-coded colour replaces a theme token", JS, "color:var(--ui-text-secondary)", "color:#6b6b6b"),
     ("a theme token the app does not declare", JS, "color:var(--ui-text-tertiary)}", "color:var(--ui-text-quinary)}"),
     ("an asterisk reaches the screen", JS, "    gotIt: 'Got it',", "    gotIt: 'Got it *',"),
@@ -134,11 +135,36 @@ MUTATIONS = [
      '        if not isinstance(language, str) or not language.strip():\n            raise ValueError("a point that does not name the reply\'s language")\n', ""),
     # the evaluation script
     ("the eval loads the backend before Hermes' bootstrap", "eval/compare_checkers.py",
-     '    bootstrap(args.core)\n    new = load(NEW_API, "ysk_eval_new")\n', '    new = load(NEW_API, "ysk_eval_new")\n    bootstrap(args.core)\n'),
+     '    bootstrap(args.core)\n    new = load(NEW_API, "asterisk_eval_new")\n', '    new = load(NEW_API, "asterisk_eval_new")\n    bootstrap(args.core)\n'),
     # docs and CI
     ("the total cap changes without the notes", API, "MAX_TURN_CHARS = 32000", "MAX_TURN_CHARS = 30000"),
     ("CI runs the paid evaluation", CI, "        run: python canary_audit.py",
      "        run: python canary_audit.py && python ../eval/compare_checkers.py --help"),
+    # the upgrade from 2.x
+    ("the old-install guard in check() is removed", API,
+     '    if _old_install():\n        raise HTTPException(status_code=409, detail=f"old {OLD_ID} plugin still installed")\n', ""),
+    ("the guard tests the 2.x folder instead of its plugin.yaml", API, '(_home() / "plugins" / OLD_ID / "plugin.yaml").is_file()',
+     '(_home() / "plugins" / OLD_ID).is_dir()'),
+    ("the 2.x ledger is not copied", API, "            _carry_over(path)\n", ""),
+    ("the 2.x ledger is copied again when the new ledger exists", API, "if path.exists() or not old.is_file() or _old_install():",
+     "if not old.is_file() or _old_install():"),
+    ("the 2.x ledger is copied while the 2.x package is present", API, "if path.exists() or not old.is_file() or _old_install():",
+     "if path.exists() or not old.is_file():"),
+    # status and old cores
+    ("ready ignores the core's receipt seam", API, "ready = desktop_ready is True and _core_ready()", "ready = desktop_ready is True"),
+    ("the update flag is not created exclusively (the notice repeats)", API, 'with open(flag, "x", encoding="utf-8"):',
+     'with open(flag, "w", encoding="utf-8"):'),
+    ("/status asks for the update notice while ready", API, '"update_notice": not ready and _first_notice()', '"update_notice": _first_notice()'),
+    ("plugin.js goes back to named SDK imports", JS, "import * as sdk from '@hermes/plugin-sdk'\n",
+     "import * as sdk from '@hermes/plugin-sdk'\nimport { atom as a0, COMPOSER_AREAS as a1, host as a2, SESSION_ROW_AREAS as a3, "
+     "usePluginI18n as a4, useValue as a5 } from '@hermes/plugin-sdk'\n"),
+    ("the desktop seam check is removed (an old SDK registers anyway)", JS, "    if (!desktopReady()) {\n", "    if (false) {\n"),
+    ("ready: false leaves the watcher on", JS, "off = !answer.ready || answer.old_install", "off = answer.old_install"),
+    ("old_install: true leaves the watcher on", JS, "off = !answer.ready || answer.old_install", "off = !answer.ready"),
+    ("the update notice shows without update_notice: true", JS, "answer?.update_notice === true && ", ""),
+    # the name
+    ("manifest.json's name goes back to the 2.x name", MANIFEST, '"name": "asterisk"', '"name": "you-should-know"'),
+    ("the auxiliary task goes back to the 2.x name", API, "call_llm(task=PLUGIN_ID,", 'call_llm(task="you_should_know",'),
 ]
 
 
@@ -151,7 +177,7 @@ def gates(root: Path) -> list[list[str]]:
 
 def caught(root: Path) -> bool:
     # The copy leaves node_modules behind; React and jsdom come from this checkout's tests/.
-    env = {**os.environ, "PYTHONUTF8": "1", "YSK_RENDER_OUT": "canary", "YSK_NODE_MODULES": str(HERE / "node_modules")}
+    env = {**os.environ, "PYTHONUTF8": "1", "ASTERISK_RENDER_OUT": "canary", "ASTERISK_NODE_MODULES": str(HERE / "node_modules")}
     return any(subprocess.run(g, cwd=root / "tests", env=env, capture_output=True).returncode != 0 for g in gates(root))
 
 
@@ -160,7 +186,7 @@ def main() -> int:
         print("FAIL  tests/node_modules has no React or jsdom — run `npm ci` in tests/ first")
         return 1
     misses = 0
-    with tempfile.TemporaryDirectory(prefix="ysk-canary-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="asterisk-canary-") as tmp:
         base = Path(tmp) / "repo"
         shutil.copytree(ROOT, base, ignore=shutil.ignore_patterns(".git", "node_modules", ".out", "__pycache__"))
         if caught(base):

@@ -1,8 +1,8 @@
-name: you-should-know
-label: You Should Know
-version: 2.1.0
+name: asterisk
+label: Asterisk
+version: 3.0.0
 description: >-
-  You Should Know — after a long reply (3,000+ characters) in a chat you opened, a second model
+  Asterisk — after a long reply (3,000+ characters) in a chat you opened, a second model
   (Opus) rereads that turn — your message, the assistant's tool calls and results, and the reply —
   and, only when there is one, names the one thing the reply did not plainly tell you: an unstated
   tradeoff, a result that may be off, a silent assumption, an understated irreversible step, a

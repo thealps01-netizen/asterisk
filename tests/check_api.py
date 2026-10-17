@@ -1,4 +1,4 @@
-"""You Should Know — the backend half against a fake model, a fake session store, a fake redactor and a
+"""Asterisk — the backend half against a fake model, a fake session store, a fake redactor and a
 fake pricing table. No test calls a model.
 
 Run: python check_api.py [path/to/plugin_api.py]      (exit 0 = passed)
@@ -55,6 +55,19 @@ Locks:
      a title that cannot be read, or a blank one, is null and the point stays.
  14. POST /feedback {check_at}: a finite positive number (not a bool) appends exactly
      {at, feedback: "already_knew", check_at}; anything else is a 400 with no line.
+ 15. The name and the upgrade from 2.x (each part in a fresh profile home):
+     (a) the auxiliary task is `asterisk` and the ledger is state/asterisk/ledger.jsonl;
+     (b) with plugins/you-should-know/plugin.yaml present, /check is a 409 "old you-should-know plugin
+         still installed": nothing read (no SessionDB opened), sent, recorded or copied, and a ledger
+         line written meanwhile copies nothing; with only the folder left it checks normally;
+     (c) the 2.x ledger is copied byte for byte before the first new line, once; a second record
+         appends one line; the old ledger and its eval/ files keep their bytes and mtimes; nothing
+         from eval/ is copied; a failed copy appends nothing and the next record copies;
+     (d) POST /status {desktop_ready} is exactly {ready, update_notice, old_install}: ready only with
+         desktop_ready true and a core whose tui_gateway.contracts.events has PersistedTurn (no flag
+         written); otherwise update_notice is true on the first call, which creates the empty flag
+         state/asterisk/update-hermes-notice, and false on every later call; old_install follows
+         plugin.yaml; no ledger line.
 """
 from __future__ import annotations
 
@@ -193,14 +206,14 @@ state.SessionDB = SessionDB
 sys.modules.update({"agent": agent, "agent.auxiliary_client": aux, "agent.usage_pricing": pricing,
                     "agent.redact": redact, "hermes_state": state})
 
-home = Path(tempfile.mkdtemp(prefix="ysk-home-"))
+home = Path(tempfile.mkdtemp(prefix="asterisk-home-"))
 os.environ["HERMES_HOME"] = str(home)
-spec = importlib.util.spec_from_file_location("ysk_api", API)
+spec = importlib.util.spec_from_file_location("asterisk_api", API)
 api = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(api)
 from fastapi import HTTPException  # noqa: E402
 
-LEDGER = home / "state" / "you-should-know" / "ledger.jsonl"
+LEDGER = home / "state" / "asterisk" / "ledger.jsonl"
 REPLY = "Here is the plan. " * 200 + "FAKE-SECRET-REPLY SECRET-REPLY-MARKER"
 
 
@@ -278,9 +291,11 @@ check(read.get("latest") is True and read.get("limit") == 500 and read.get("incl
       f"the store is read latest-first, limit 500, with the compression lineage ({read})")
 check(Store.closed == closed + 1, "the store is closed afterwards")
 call = Fake.calls[-1]
-check(call.get("provider") == "anthropic" and call.get("model") == "claude-opus-5-5" and call.get("task") == "you_should_know",
+check(call.get("provider") == "anthropic" and call.get("model") == "claude-opus-5-5" and call.get("task") == "asterisk",
       f"Opus on anthropic under the plugin's task ({call.get('provider')}, {call.get('model')}, {call.get('task')})")
 check(call.get("max_tokens") == 700 and call.get("timeout") == 90, "a bounded answer and timeout")
+check(call.get("task") == "asterisk" and api._ledger_path() == LEDGER and LEDGER.is_file() and LEDGER.parent.name == "asterisk",
+      f"15a. the auxiliary task is 'asterisk' and the ledger is state/asterisk/ledger.jsonl ({call.get('task')}, {api._ledger_path()})")
 system, user = call["messages"][0]["content"], call["messages"][1]["content"]
 check(len(call["messages"]) == 2 and call["messages"][0]["role"] == "system" and system == api.SYSTEM_PROMPT
       and user.startswith("The turn, oldest first:\n\n<turn>\n") and user.endswith("\n</turn>\n\n" + api.LANGUAGE_RULE),
@@ -501,11 +516,11 @@ stub.write_text('SYSTEM_PROMPT = "old prompt"\n\n\ndef _clip(text):\n    return 
                 'def _parse(raw):\n    import json\n    return json.loads(raw)["points"]\n\n\n'
                 'def _call_llm(messages):\n    raise AssertionError("the old model was called")\n', encoding="utf-8")
 before_files = sorted(p for p in home.rglob("*"))
-fake_core = Path(tempfile.mkdtemp(prefix="ysk-core-"))
+fake_core = Path(tempfile.mkdtemp(prefix="asterisk-core-"))
 (fake_core / "hermes_bootstrap.py").write_text("STARTED = True\n", encoding="utf-8")
 calls = len(Fake.calls)
 Fake.raises = AssertionError("a model was called in a dry run")
-espec = importlib.util.spec_from_file_location("ysk_eval", EVAL)
+espec = importlib.util.spec_from_file_location("asterisk_eval", EVAL)
 ev = importlib.util.module_from_spec(espec)
 espec.loader.exec_module(ev)
 order: list[str] = []
@@ -522,16 +537,132 @@ Fake.raises = None
 printed = buf.getvalue()
 stub.unlink()
 started = sys.modules.get("hermes_bootstrap")
-check(order[:2] == ["bootstrap", "ysk_eval_new"] and getattr(started, "STARTED", False)
+check(order[:2] == ["bootstrap", "asterisk_eval_new"] and getattr(started, "STARTED", False)
       and Path(started.__file__).resolve().parent == fake_core.resolve() and sys.path[0] == str(fake_core),
       f"eval starts Hermes first: the --core root first on sys.path, hermes_bootstrap imported, then the backend ({order})")
 check(rc == 0 and len(Fake.calls) == calls, f"eval --dry-run exits 0 and calls no model (exit {rc})")
 check("session=st-1 rows=10-16 old_chars=" in printed and "new_turn_chars=" in printed and "est_tokens=" in printed
       and "estimate" in printed and "1 turn(s)" in printed, f"eval --dry-run prints the sizes per turn ({printed.strip()!r})")
-check(sorted(p for p in home.rglob("*")) == before_files and not (home / "state" / "you-should-know" / "eval").exists(),
+check(sorted(p for p in home.rglob("*")) == before_files and not (home / "state" / "asterisk" / "eval").exists(),
       "eval --dry-run writes no file")
 lines = ev.point_lines([{"kind": "cost", "by": "user", "headline": "H", "text": "T"}])
 check(lines[0] == "- **cost**, by user: H — T", f"the evaluation's markdown names the headline before the point ({lines[0]!r})")
+
+
+# 15. Upgrade from 2.x and /status, each in a fresh profile home
+def fresh_home(tag: str) -> Path:
+    path = Path(tempfile.mkdtemp(prefix=f"asterisk-{tag}-"))
+    os.environ["HERMES_HOME"] = str(path)
+    return path
+
+
+def snapshot(root: Path) -> dict:
+    return {str(p.relative_to(root)): (p.read_bytes(), p.stat().st_mtime_ns) for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+OLD_BYTES = '{"at": 1.0, "chars": 3100, "note": "2.x line, é"}\n{"at": 2.0, "feedback": "already_knew", "check_at": 1.0}\n'.encode("utf-8")
+Fake.answer = '{"points": []}'
+# 15b. the 2.x package installed in the same profile: /check stands down before anything else
+h2 = fresh_home("upgrade")
+old_state = h2 / "state" / "you-should-know"
+(old_state / "eval").mkdir(parents=True)
+(old_state / "ledger.jsonl").write_bytes(OLD_BYTES)
+(old_state / "eval" / "compare-1.md").write_text("EVAL-MARKER conversation text\n", encoding="utf-8")
+old_pkg = h2 / "plugins" / "you-should-know"
+old_pkg.mkdir(parents=True)
+(old_pkg / "plugin.yaml").write_text("name: you-should-know\n", encoding="utf-8")
+old_before = snapshot(old_state)
+new_ledger = h2 / "state" / "asterisk" / "ledger.jsonl"
+opened, calls = len(Store.opened), len(Fake.calls)
+code = status_of(api.check, "st-1", RECEIPT)
+check(code == (409, "old you-should-know plugin still installed") and len(Store.opened) == opened and len(Fake.calls) == calls
+      and not new_ledger.exists(),
+      f"15b. with plugins/you-should-know/plugin.yaml present /check is a 409, nothing read, sent, recorded or copied ({code})")
+api.feedback(1000.0)
+check(new_ledger.read_bytes().count(b"\n") == 1 and OLD_BYTES not in new_ledger.read_bytes(),
+      "15b. a ledger line written while the 2.x package is present does not copy its ledger (it may still be writing)")
+new_ledger.unlink()
+(old_pkg / "plugin.yaml").unlink()
+out = api.check("st-1", RECEIPT)
+check(out["points"] == [] and len(Fake.calls) == calls + 1,
+      "15b. with only the 2.x folder left (no plugin.yaml, a Windows remnant) /check runs normally")
+# 15c. migration: copied once, byte for byte, then appended; the old folder untouched
+data = new_ledger.read_bytes()
+lines_after = data[len(OLD_BYTES):].decode("utf-8").splitlines()
+check(data.startswith(OLD_BYTES) and len(lines_after) == 1 and json.loads(lines_after[0])["points"] == 0,
+      f"15c. the first record copies the 2.x ledger byte for byte and appends its line after it ({len(data)} bytes)")
+api.check("st-1", RECEIPT)
+data = new_ledger.read_bytes()
+check(data.startswith(OLD_BYTES) and data.count(b"\n") == OLD_BYTES.count(b"\n") + 2,
+      "15c. a second record appends one line and does not copy again")
+check(snapshot(old_state) == old_before, "15c. the 2.x ledger and its eval/ files are unchanged (bytes and mtimes)")
+check(sorted(p.name for p in new_ledger.parent.iterdir()) == ["ledger.jsonl"] and "EVAL-MARKER" not in data.decode("utf-8"),
+      "15c. nothing from the old eval/ is copied: state/asterisk holds only its ledger")
+h3 = fresh_home("copyfail")
+(h3 / "state" / "you-should-know").mkdir(parents=True)
+(h3 / "state" / "you-should-know" / "ledger.jsonl").write_bytes(OLD_BYTES)
+real_copy = api.shutil.copyfile
+
+
+def failing_copy(*_a, **_k):
+    raise PermissionError("held by another process")
+
+
+api.shutil.copyfile = failing_copy
+api.feedback(1000.0)
+api.shutil.copyfile = real_copy
+failed_ledger = h3 / "state" / "asterisk" / "ledger.jsonl"
+first_try = failed_ledger.exists()
+api.feedback(1000.0)
+check(not first_try and failed_ledger.read_bytes().startswith(OLD_BYTES) and failed_ledger.read_bytes().count(b"\n") == 3,
+      "15c. a failed copy appends nothing; the next record copies and appends")
+
+# 15d. POST /status
+events_name = "tui_gateway.contracts.events"
+had_events = events_name in sys.modules
+saved_events = sys.modules.get(events_name)
+with_seam = types.ModuleType(events_name)
+with_seam.PersistedTurn = type("PersistedTurn", (), {})
+without_seam = types.ModuleType(events_name)
+
+
+def core(module) -> None:
+    sys.modules[events_name] = module
+
+
+h4 = fresh_home("status")
+core(with_seam)
+flag = h4 / "state" / "asterisk" / "update-hermes-notice"
+out = api.status_route({"desktop_ready": True})
+check(out == {"ready": True, "update_notice": False, "old_install": False} and list(out) == ["ready", "update_notice", "old_install"]
+      and not flag.exists(), f"15d. a current core and desktop: ready, no notice, no flag written; exactly three keys ({out})")
+check(any(getattr(r, "path", "") == "/status" and "POST" in getattr(r, "methods", ()) for r in api.router.routes),
+      "15d. the router mounts POST /status")
+for name, module, body in (("a core without PersistedTurn", without_seam, {"desktop_ready": True}),
+                           ("a core without the events module", None, {"desktop_ready": True}),
+                           ("a desktop without its seams", with_seam, {"desktop_ready": False}),
+                           ("a body that is not an object", with_seam, "not a dict")):
+    home_n = fresh_home("status")
+    core(module)
+    flag = home_n / "state" / "asterisk" / "update-hermes-notice"
+    first = api.status_route(body)
+    made = flag.is_file() and flag.read_bytes() == b""
+    later = [api.status_route(body) for _ in range(2)]
+    check(first == {"ready": False, "update_notice": True, "old_install": False} and made
+          and all(o == {"ready": False, "update_notice": False, "old_install": False} for o in later),
+          f"15d. {name}: not ready; update_notice true on the first call with an empty flag created, false on every later call ({first}, {later})")
+    check(not (home_n / "state" / "asterisk" / "ledger.jsonl").exists(), f"15d. {name}: /status writes no ledger line")
+core(with_seam)
+(home_n / "plugins" / "you-should-know").mkdir(parents=True)
+folder_only = api.status_route({"desktop_ready": True})["old_install"]
+(home_n / "plugins" / "you-should-know" / "plugin.yaml").write_text("name: you-should-know\n", encoding="utf-8")
+with_yaml = api.status_route({"desktop_ready": True})["old_install"]
+check(folder_only is False and with_yaml is True, f"15d. old_install follows plugins/you-should-know/plugin.yaml ({folder_only}, {with_yaml})")
+if had_events:
+    sys.modules[events_name] = saved_events
+else:
+    del sys.modules[events_name]
+os.environ["HERMES_HOME"] = str(home)
 
 print(f"\n{failures} FAILED" if failures else "\nALL PASSED")
 sys.exit(1 if failures else 0)

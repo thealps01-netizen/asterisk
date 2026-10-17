@@ -1,4 +1,4 @@
-"""You Should Know — static rules over the shipped files.
+"""Asterisk — static rules over the shipped files.
 
 Run: python audit_static.py [--root <repo copy>]      (exit 0 = clean)
 
@@ -14,6 +14,9 @@ Rules:
               core's apps/desktop/src/styles.css; core from --core, HERMES_CORE or
               <HERMES_HOME>/hermes-agent). A missing styles.css is a problem, never a skip.
   versions    plugin.yaml, dashboard/manifest.json and the top CHANGELOG heading name one version
+  name        plugin.yaml `name`, manifest.json `name`, PLUGIN_ID in plugin_api.py and `const ID` in
+              plugin.js are all `asterisk` (the install folder, the route and the desktop's REST path
+              are each derived from one of them), and call_llm is called with task=PLUGIN_ID
   model       the model and the price floor the notes describe are the ones the backend uses
   caps        the notes state the total and the per-tool-result caps (MAX_TURN_CHARS,
               MAX_TOOL_RESULT_CHARS) as the backend has them
@@ -31,12 +34,13 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-# `from` / `import` as keywords only: `t('ysk.from', …)` or a `ysk-from` class is a string, not an import
+# `from` / `import` as keywords only: `t('asterisk.from', …)` or an `asterisk-from` class is a string, not an import
 # (the desktop loader itself skips strings and comments).
 LOADER = re.compile(r"""(?<![\w.$-])(from\s*|import\s*\(\s*|import\s+)(['"])([^'"]+)\2""")
 FORBIDDEN = (r"\bfetch\(", r"XMLHttpRequest", r"localStorage", r"ctx\.storage", r"\bpanes\b", r"PANES_AREA",
              r"registerSettingsPage", r"revealPane", r"window\.hermesDesktop")
 AREAS = ("COMPOSER_AREAS.top", "SESSION_ROW_AREAS.trailing")
+NAME = "asterisk"
 
 
 def hermes_home() -> Path:
@@ -75,14 +79,26 @@ def audit(root: Path, installed: Path | None, core: Path) -> list[str]:
         for name in sorted(set(re.findall(r"var\(\s*(--[\w-]+)", js)) - declared):
             problems.append(f"theme: var({name}) in desktop/plugin.js is not a token the app declares in styles.css")
 
-    yaml_version = re.search(r"^version:\s*(\S+)", (root / "plugin.yaml").read_text(encoding="utf-8"), re.M)
+    yaml_text = (root / "plugin.yaml").read_text(encoding="utf-8")
+    yaml_version = re.search(r"^version:\s*(\S+)", yaml_text, re.M)
     manifest = json.loads((root / "dashboard" / "manifest.json").read_text(encoding="utf-8"))
     heading = re.search(r"^## (\S+) ", (root / "CHANGELOG.md").read_text(encoding="utf-8"), re.M)
     versions = {yaml_version.group(1) if yaml_version else None, manifest.get("version"), heading.group(1) if heading else None}
     if len(versions) != 1 or None in versions:
         problems.append(f"versions: plugin.yaml / manifest / CHANGELOG disagree {sorted(map(str, versions))}")
 
-    notes = (root / "Docs" / "you-should-know-notes.md").read_text(encoding="utf-8")
+    yaml_name = re.search(r"^name:\s*(\S+)$", yaml_text, re.M)
+    plugin_id = re.search(r'^PLUGIN_ID = "([^"]+)"$', api, re.M)
+    js_id = re.search(r"^const ID = '([^']+)'$", js, re.M)
+    names = {"plugin.yaml": yaml_name.group(1) if yaml_name else None, "manifest.json": manifest.get("name"),
+             "PLUGIN_ID": plugin_id.group(1) if plugin_id else None, "const ID": js_id.group(1) if js_id else None}
+    wrong = {k: v for k, v in names.items() if v != NAME}
+    if wrong:
+        problems.append(f"name: every name must be {NAME!r} (folder, route and REST path follow them) — {wrong}")
+    if "call_llm(task=PLUGIN_ID," not in api:
+        problems.append("name: call_llm is not called with task=PLUGIN_ID")
+
+    notes = (root / "Docs" / "asterisk-notes.md").read_text(encoding="utf-8")
     model = re.search(r'^MODEL = "([^"]+)"', api, re.M)
     floor = re.search(r"^MIN_CHARS = (\d+)", api, re.M)
     js_floor = re.search(r"^export const MIN_CHARS = (\d+)", js, re.M)
@@ -113,7 +129,7 @@ def main() -> int:
     parser.add_argument("--no-installed", action="store_true", help="skip the installed-copy rule (canary copies)")
     parser.add_argument("--core", type=Path, default=default_core(), help="the Hermes core checkout (for the theme rule)")
     args = parser.parse_args()
-    installed = None if args.no_installed else hermes_home() / "desktop-plugins" / "you-should-know" / "plugin.js"
+    installed = None if args.no_installed else hermes_home() / "desktop-plugins" / "asterisk" / "plugin.js"
     problems = audit(args.root.resolve(), installed, args.core)
     for p in problems:
         print(f"PROBLEM  {p}")

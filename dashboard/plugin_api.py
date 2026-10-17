@@ -1,9 +1,10 @@
-"""You Should Know — the backend half: asks a second model what a turn shows that its reply did not say.
+"""Asterisk — the backend half: asks a second model what a turn shows that its reply did not say.
 
-Routes (mounted at /api/plugins/you-should-know/):
+Routes (mounted at /api/plugins/asterisk/):
   POST /check     {session_id, turn}  -> {points: [] | [{kind, by, headline, text}], cost_usd, cost_status,
                                           chars, at, title}
   POST /feedback  {check_at}          -> {ok: true}   (the user dismissed that check's note: "Already knew")
+  POST /status    {desktop_ready}     -> {ready, update_notice, old_install}   (once per app start)
 
 The desktop half calls it for a finished reply of a chat the user opened, once per reply, when the
 reply is long (MIN_CHARS). `session_id` is the chat's stored id and `turn` is the frame's
@@ -15,19 +16,27 @@ it, as a short headline and one sentence. No point is the normal answer. A turn 
 is an error, never "nothing to flag". With a point the chat's title is read too (the desktop names a
 note's chat by it); a title that cannot be read is null, never an error and never a lost point.
 
-What it writes: one line per check to <HERMES_HOME>/state/you-should-know/ledger.jsonl — time, reply
+What it writes: one line per check to <HERMES_HOME>/state/asterisk/ledger.jsonl — time, reply
 length, tokens, cost, whether there was a point, its kind and who decided, the turn's size; and one
 line per "Already knew" with only its time and the check's `at`. Never any text: not the turn, not the
 reply, not the point, not its headline, not the chat's title. That ledger is what the cost review
-reads (see Docs/you-should-know-notes.md).
+reads (see Docs/asterisk-notes.md).
+
+Upgrade from 2.x (OLD_ID): while that package is installed in this profile, /check refuses (409), so
+no reply is ever checked twice. Once it is gone, the first ledger line copies 2.x's ledger over, byte
+for byte; the old folder is never changed. /status tells the desktop half whether to run: on a core
+without the receipt seam it says so, and asks for the one "update Hermes" notice only the first time
+(an empty flag file, state/asterisk/update-hermes-notice).
 """
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import math
 import os
 import re
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -37,7 +46,9 @@ from fastapi import APIRouter, HTTPException
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-PLUGIN_ID = "you-should-know"
+PLUGIN_ID = "asterisk"
+OLD_ID = "you-should-know"  # the 2.x package: its folder and its ledger's folder
+UPDATE_FLAG = "update-hermes-notice"
 PROVIDER = "anthropic"
 MODEL = "claude-opus-5-5"
 MIN_CHARS = 3000
@@ -119,6 +130,23 @@ def _home() -> Path:
 
 def _ledger_path() -> Path:
     return _home() / "state" / PLUGIN_ID / "ledger.jsonl"
+
+
+def _old_install() -> bool:
+    """The 2.x package is installed in this profile. Its manifest, not its folder: on Windows an uninstall
+    can leave a held folder behind with the manifests already deleted."""
+    return (_home() / "plugins" / OLD_ID / "plugin.yaml").is_file()
+
+
+def _carry_over(path: Path) -> None:
+    """2.x's ledger, copied once byte for byte before the first line here (a temporary sibling, then a
+    rename). Only while this ledger does not exist and the 2.x package is gone; the old file stays as is."""
+    old = _home() / "state" / OLD_ID / "ledger.jsonl"
+    if path.exists() or not old.is_file() or _old_install():
+        return
+    tmp = path.with_name(path.name + ".tmp")
+    shutil.copyfile(old, tmp)
+    os.replace(tmp, path)
 
 
 def _clip(text: str, limit: int) -> str:
@@ -203,13 +231,13 @@ def read_title(session_id: str) -> str | None:
         from hermes_state import SessionDB
         db = SessionDB(read_only=True)
     except Exception as exc:  # noqa: BLE001 — a title is a nicety: never an error, never a lost point
-        log.warning("you-should-know: title not read (%s)", type(exc).__name__)
+        log.warning("asterisk: title not read (%s)", type(exc).__name__)
         return None
     try:
         resolved = db.resolve_session_id(session_id)
         title = db.get_session_title(db.resolve_resume_session_id(resolved)) if resolved else None
     except Exception as exc:  # noqa: BLE001
-        log.warning("you-should-know: title not read (%s)", type(exc).__name__)
+        log.warning("asterisk: title not read (%s)", type(exc).__name__)
         return None
     finally:
         db.close()
@@ -270,7 +298,7 @@ def build_messages(turn_text: str) -> list[dict]:
 
 def _call_llm(messages: list[dict]):
     from agent.auxiliary_client import call_llm
-    return call_llm(task="you_should_know", provider=PROVIDER, model=MODEL, messages=messages,
+    return call_llm(task=PLUGIN_ID, provider=PROVIDER, model=MODEL, messages=messages,
                     max_tokens=MAX_OUTPUT_TOKENS, timeout=TIMEOUT_S)
 
 
@@ -292,7 +320,7 @@ def _cost(response) -> tuple[int, int, float | None, str]:
         amount = float(result.amount_usd) if result.amount_usd is not None else None
         return usage.input_tokens, usage.output_tokens, amount, str(result.status)
     except Exception as exc:  # noqa: BLE001 — a missing price must not hide the points
-        log.warning("you-should-know: cost unavailable (%s: %s)", type(exc).__name__, exc)
+        log.warning("asterisk: cost unavailable (%s: %s)", type(exc).__name__, exc)
         return 0, 0, None, "unknown"
 
 
@@ -329,10 +357,12 @@ def _record(entry: dict) -> None:
     path = _ledger_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with _ledger_lock, path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        with _ledger_lock:
+            _carry_over(path)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except OSError as exc:
-        log.warning("you-should-know: ledger not written (%s)", type(exc).__name__)
+        log.warning("asterisk: ledger not written (%s)", type(exc).__name__)
 
 
 def _is_id(value) -> bool:
@@ -349,6 +379,8 @@ def _valid_turn(turn) -> bool:
 
 
 def check(session_id, turn, now: float | None = None) -> dict:
+    if _old_install():
+        raise HTTPException(status_code=409, detail=f"old {OLD_ID} plugin still installed")
     if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 200:
         raise HTTPException(status_code=400, detail="session_id must be a non-empty string")
     if not _valid_turn(turn):
@@ -357,7 +389,7 @@ def check(session_id, turn, now: float | None = None) -> dict:
     try:
         rows = read_turn(session_id, turn)
     except TurnUnreadable as exc:
-        log.warning("you-should-know: turn not readable (%s)", exc)
+        log.warning("asterisk: turn not readable (%s)", exc)
         _record({"at": at, "model": MODEL, "error": "turn_unreadable"})
         raise HTTPException(status_code=409, detail="turn not readable") from exc
     chars = len(_text(rows[-1].get("content")))
@@ -366,13 +398,13 @@ def check(session_id, turn, now: float | None = None) -> dict:
     try:
         turn_text, stats = build_turn(rows)
     except RedactionUnavailable as exc:
-        log.warning("you-should-know: redaction unavailable (%s); nothing sent", exc)
+        log.warning("asterisk: redaction unavailable (%s); nothing sent", exc)
         raise HTTPException(status_code=500, detail="redaction unavailable") from exc
     started = time.monotonic()
     try:
         response = _call_llm(build_messages(turn_text))
     except Exception as exc:  # noqa: BLE001 — named to the user, the full error only logged
-        log.warning("you-should-know: model call failed: %s", exc)
+        log.warning("asterisk: model call failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"model call failed ({type(exc).__name__})") from exc
     tokens_in, tokens_out, usd, status = _cost(response)
     entry = {"at": at, "chars": chars, "model": MODEL, "input_tokens": tokens_in, "output_tokens": tokens_out,
@@ -382,7 +414,7 @@ def check(session_id, turn, now: float | None = None) -> dict:
         points = _parse(_content(response))
     except (ValueError, TypeError) as exc:
         _record({**entry, "points": None, "error": "unreadable"})
-        log.warning("you-should-know: model answer unreadable (%s)", type(exc).__name__)
+        log.warning("asterisk: model answer unreadable (%s)", type(exc).__name__)
         raise HTTPException(status_code=502, detail="model answer unreadable") from exc
     _record({**entry, "points": len(points), "kinds": [p["kind"] for p in points],
              "by": points[0]["by"] if points else None})
@@ -399,6 +431,35 @@ def feedback(check_at, now: float | None = None) -> dict:
     return {"ok": True}
 
 
+def _core_ready() -> bool:
+    """The core sends the turn's receipt (PersistedTurn, Hermes v0.21.6 and later)."""
+    try:
+        return hasattr(importlib.import_module("tui_gateway.contracts.events"), "PersistedTurn")
+    except Exception:  # noqa: BLE001 — a core that cannot say is a core without the seam
+        return False
+
+
+def _first_notice() -> bool:
+    """True only for the call that creates the empty flag: the "update Hermes" notice shows once per profile."""
+    flag = _home() / "state" / PLUGIN_ID / UPDATE_FLAG
+    try:
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        with open(flag, "x", encoding="utf-8"):
+            pass
+    except FileExistsError:
+        return False
+    except OSError as exc:
+        log.warning("asterisk: update notice flag not written (%s)", type(exc).__name__)
+        return False
+    return True
+
+
+def status(desktop_ready) -> dict:
+    """Whether Asterisk runs here: the desktop half's seams (its own answer) and the core's receipt seam."""
+    ready = desktop_ready is True and _core_ready()
+    return {"ready": ready, "update_notice": not ready and _first_notice(), "old_install": _old_install()}
+
+
 @router.post("/check")
 def check_route(body: dict):
     if not isinstance(body, dict):
@@ -409,3 +470,8 @@ def check_route(body: dict):
 @router.post("/feedback")
 def feedback_route(body: dict):
     return feedback(body.get("check_at") if isinstance(body, dict) else None)
+
+
+@router.post("/status")
+def status_route(body: dict):
+    return status(body.get("desktop_ready") if isinstance(body, dict) else None)

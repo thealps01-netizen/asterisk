@@ -1,12 +1,13 @@
-# You Should Know — design notes
+# Asterisk — design notes
 
 ## What it is for
 
 Long replies hide the one thing that matters, and the reply is not the whole story: the assistant
 made choices along the way — in its tool calls and in what their results showed — that the reply may
-not mention. You Should Know rereads the whole turn and names, at most, the one thing the user
-should know but would miss from the reply alone, and who decided it. It is the "You Should Know"
-mod from the Claude Code mods video (2026-10), rebuilt on Hermes' own extension points.
+not mention. Asterisk rereads the whole turn and names, at most, the one thing the user
+should know but would miss from the reply alone, and who decided it. It was first built as You
+Should Know, after the "You Should Know" mod from the Claude Code mods video (2026-10), rebuilt on
+Hermes' own extension points.
 
 ## How it works
 
@@ -14,7 +15,7 @@ mod from the Claude Code mods video (2026-10), rebuilt on Hermes' own extension 
    is not `response_reused`, its text is at least **3,000** characters, and its runtime session is a
    chat the user has opened in this app (a subagent's mirrored frame carries no status and is never
    checked; background chats never opened here are not checked). Each reply is checked once.
-2. It posts `{session_id, turn}` to the plugin's own backend, `POST /api/plugins/you-should-know/check`:
+2. It posts `{session_id, turn}` to the plugin's own backend, `POST /api/plugins/asterisk/check`:
    the stored id of the reply's OWN chat (not necessarily the focused one) and the frame's
    `persisted_turn` receipt — the committed row ids of the turn, from the user's message through the
    final reply (Hermes core v0.21.6 and later). It never sends the reply's text. A missing id or
@@ -36,7 +37,7 @@ mod from the Claude Code mods video (2026-10), rebuilt on Hermes' own extension 
    reply 16,000. The whole turn is at most **32,000**: over that, whole steps are dropped oldest
    first and one line says how many; the user's message and the final reply are never dropped.
 6. The backend asks `claude-opus-5-5` on the `anthropic` provider through Hermes' auxiliary client
-   (`call_llm`, task `you_should_know`, 700 output tokens, 90 s). The answer is strict JSON: no point,
+   (`call_llm`, task `asterisk`, 700 output tokens, 90 s). The answer is strict JSON: no point,
    or one point with a kind (`tradeoff`, `result`, `assumption`, `irreversible`, `security`, `cost`),
    `by` (`assistant` or `user`), the language of the final reply, a `headline` (the point as a short
    newspaper headline: at most 60 characters asked, at most 80 kept, cut with `…`) and one sentence,
@@ -79,7 +80,7 @@ Naming the provider when reading it would read the Anthropic shape and count zer
 
 ## The ledger
 
-`<HERMES_HOME>/state/you-should-know/ledger.jsonl`, one line per check: time, final reply length,
+`<HERMES_HOME>/state/asterisk/ledger.jsonl`, one line per check: time, final reply length,
 model, input/output tokens, cost and its status, seconds, `points` (0 or 1), `kinds`, `by` (null,
 `assistant` or `user`), `turn_chars`, `tool_results`, `truncated`, and `turn_complete` (the receipt's
 own flag). Never any text: not the turn, not the reply, not the point, its headline or the chat's
@@ -111,8 +112,45 @@ points are mostly noise, turn the plugin off — it is opt-in value, not a safet
   the new id to its row); the strip still shows the note.
 - Every composer (split view) shows the same pending list: `composer.top` does not say which chat a
   composer belongs to, so expansion follows the focused chat.
+- The 2.x package test and the update-notice flag are per profile home: a 2.x package left in
+  another profile is not seen, and each profile shows the notice once.
+- On a core that lacks the desktop seams and has no reachable backend, no notice can be shown or
+  remembered: the plugin simply registers nothing.
+
+## Install, update, upgrade
+
+Hermes names an installed plugin's folder after `plugin.yaml`'s `name` (`asterisk`), mounts its
+backend at `/api/plugins/<manifest.json name>` (only when that name is in `plugins.enabled`), and
+the desktop half's `ctx.rest` calls `/api/plugins/<plugin.js id>`; all three are `asterisk`. The
+desktop half is a copy of `plugins/asterisk/desktop/` the app keeps in `desktop-plugins/asterisk`.
+Install and update run in the app (Capabilities → Plugins → Install from Git; the row's Update
+button), see the README.
+
+Upgrading from 2.x (You Should Know): uninstall the `you-should-know` row, then install Asterisk.
+The uninstall removes 2.x's folder, its pin and its desktop half; the old Update button would pull
+3.0.0 into the old folder name, where Asterisk stays off. On its first ledger line Asterisk copies
+`state/you-should-know/ledger.jsonl` to `state/asterisk/ledger.jsonl` once, byte for byte (only
+while the new ledger does not exist and the 2.x package is gone). The old folder, its ledger and its
+`eval/` files are never changed, moved or read beyond that one copy.
+
+While the 2.x package is still installed in the same profile (its `plugins/you-should-know/plugin.yaml`
+exists), Asterisk stands down: `/check` answers 409 before reading anything, and the desktop half,
+told so by `/status`, stops checking and shows one notice per app start. Two packages would
+otherwise check every long reply twice and pay twice.
+
+## Old Hermes
+
+Asterisk needs Hermes v0.21.6 or later, decided by seams, not by a version string. The desktop half
+imports the SDK as a namespace (an old SDK lacks names, and a named import of a missing one would fail
+the whole module) and checks `COMPOSER_AREAS.top`, `SESSION_ROW_AREAS.trailing`, `atom`, `useValue`,
+`usePluginI18n` and `host` (`state.focusedSessionId`, `state.focusedStoredSessionId`, `notify`,
+`openSession`). When one is missing it registers nothing. Otherwise it registers and asks
+`POST /status`, and the backend checks the core's receipt (`PersistedTurn` in
+`tui_gateway.contracts.events`). When either is too old there is one "update Hermes" notice, once
+per profile: the backend creates the empty flag file `state/asterisk/update-hermes-notice` (it holds
+no text and is never removed) and asks for the notice only on the call that created it. A failed
+`/status` changes nothing.
 
 ## Turning it off
 
-Settings → Plugins → You Should Know → off (or remove `desktop-plugins/you-should-know`). The
-backend route then sees no calls.
+Capabilities → Plugins → Asterisk → off (or Uninstall). The backend route then sees no calls.
