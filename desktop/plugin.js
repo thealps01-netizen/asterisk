@@ -5,7 +5,7 @@
  * complete, a new reply, at least MIN_CHARS long), the plugin sends the backend that chat's stored id
  * and the frame's `persisted_turn` receipt (the turn's committed row ids). The backend reads that
  * whole turn — the user's message, the assistant's tool calls and their results, the final reply —
- * and a second model (Opus) returns one point or none: an unstated tradeoff, a result that may be
+ * and a second model (the one chosen for Asterisk in Settings → Models) returns one point or none: an unstated tradeoff, a result that may be
  * off, a silent assumption, an understated irreversible step, a security risk or a cost, saying who
  * decided it (the assistant or the user), as a short headline and one sentence. Nothing to flag ->
  * nothing shown (the normal case).
@@ -48,8 +48,8 @@ const en = {
     title: 'Asterisk',
     label: 'Worth knowing',
     count: n => (n === 1 ? '1 note' : `${n} notes`),
-    meta: (cost, by, title) => [title, 'Opus', cost, by].filter(Boolean).join(' · '),
-    from: (title, cost) => (cost ? `${title} · Opus ${cost}` : `${title} · Opus`),
+    meta: (cost, by, title, model) => [title, model, cost, by].filter(Boolean).join(' · '),
+    from: (title, cost, model) => [title, [model, cost].filter(Boolean).join(' ')].filter(Boolean).join(' · '),
     untitled: 'Untitled chat',
     by: {
       assistant: 'decided by assistant',
@@ -64,7 +64,8 @@ const en = {
     feedbackFailed: detail => `Could not record "Already knew": ${detail}`,
     pet: 'Worth knowing: a note above the input',
     updateHermes: 'Asterisk needs Hermes v0.21.6 or later and stays off until then. Update Hermes, then reopen the app.',
-    oldInstall: 'The old "you-should-know" plugin is still installed, so Asterisk stays off and no reply is checked twice. Uninstall it in Capabilities → Plugins, then reopen the app.'
+    oldInstall: 'The old "you-should-know" plugin is still installed, so Asterisk stays off and no reply is checked twice. Uninstall it in Capabilities → Plugins, then reopen the app.',
+    noModel: 'Asterisk has no model chosen, so it checks no reply. It does not use your main model on its own. Choose one in Settings → Models → Auxiliary models → Asterisk (Change, or Set to main).'
   }
 }
 
@@ -114,6 +115,7 @@ export function noteFor(result, { key, storedId }) {
     text: point.text,
     by: point.by,
     cost: fmtCost(result.cost_usd, result.cost_status),
+    model: filled(result.model) ? result.model : '',
     checkAt: result.at
   }
 }
@@ -166,6 +168,7 @@ export function createWatcher(ctx, hostApi = host) {
   let pending = false
   // The backend said Asterisk stays off here (a core too old, or the 2.x package still installed).
   let off = false
+  let noModelShown = false
   const noteFocus = () => {
     if (pending) return
     pending = true
@@ -193,6 +196,13 @@ export function createWatcher(ctx, hostApi = host) {
     } catch (err) {
       const detail = String(err?.message || err)
       console.warn(`[${ID}] check failed`, err)
+      if (detail.includes('no model chosen')) {
+        if (!noModelShown) {
+          noModelShown = true
+          hostApi.notify({ id: `${ID}-no-model`, kind: 'warning', title: t('asterisk.title'), message: t('asterisk.noModel') })
+        }
+        return
+      }
       hostApi.notify({ id: `${ID}-error`, kind: 'error', title: t('asterisk.title'), message: t('asterisk.failed', detail) })
       return
     }
@@ -295,7 +305,7 @@ function Entry({ note, index, numbered, focused, motion, t, watcher }) {
   const body = expanded
     ? [
         jsx('p', { className: 'asterisk-text', 'data-asterisk': 'text', children: note.text }, 'text'),
-        jsx('p', { className: 'asterisk-meta', 'data-asterisk': 'meta', children: t('asterisk.meta', note.cost, by, here ? '' : title) }, 'meta'),
+        jsx('p', { className: 'asterisk-meta', 'data-asterisk': 'meta', children: t('asterisk.meta', note.cost, by, here ? '' : title, note.model) }, 'meta'),
         jsxs('div', {
           className: 'asterisk-actions',
           children: [
@@ -305,7 +315,7 @@ function Entry({ note, index, numbered, focused, motion, t, watcher }) {
           ]
         }, 'actions')
       ]
-    : [jsx('p', { className: 'asterisk-meta asterisk-from', 'data-asterisk': 'meta', children: t('asterisk.from', title, note.cost) }, 'line')]
+    : [jsx('p', { className: 'asterisk-meta asterisk-from', 'data-asterisk': 'meta', children: t('asterisk.from', title, note.cost, note.model) }, 'line')]
   return jsxs('li', {
     className: numbered ? 'asterisk-entry asterisk-numbered' : 'asterisk-entry',
     'data-asterisk': 'entry',

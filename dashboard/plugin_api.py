@@ -49,8 +49,6 @@ router = APIRouter()
 PLUGIN_ID = "asterisk"
 OLD_ID = "you-should-know"  # the 2.x package: its folder and its ledger's folder
 UPDATE_FLAG = "update-hermes-notice"
-PROVIDER = "anthropic"
-MODEL = "claude-opus-5-5"
 MIN_CHARS = 3000
 MAX_TURN_ROWS = 500
 # Per-piece caps; a clipped piece keeps its head and its tail (errors and test summaries sit at
@@ -296,10 +294,22 @@ def build_messages(turn_text: str) -> list[dict]:
             {"role": "user", "content": "The turn, oldest first:\n\n" + turn_text + "\n\n" + LANGUAGE_RULE}]
 
 
-def _call_llm(messages: list[dict]):
+def _chosen_route() -> dict | None:
+    try:
+        from agent.auxiliary_client import _resolve_task_provider_model
+        provider, model = _resolve_task_provider_model(PLUGIN_ID)[:2]
+    except Exception as exc:
+        log.warning("asterisk: model choice not read (%s)", type(exc).__name__)
+        return {"provider": None, "model": None}
+    if provider == "auto" and not model:
+        return None
+    return {"provider": provider, "model": model}
+
+
+def _call_llm(messages: list[dict], route: dict):
     from agent.auxiliary_client import call_llm
-    return call_llm(task=PLUGIN_ID, provider=PROVIDER, model=MODEL, messages=messages,
-                    max_tokens=MAX_OUTPUT_TOKENS, timeout=TIMEOUT_S)
+    return call_llm(task=PLUGIN_ID, messages=messages, max_tokens=MAX_OUTPUT_TOKENS, timeout=TIMEOUT_S,
+                    route_info=route)
 
 
 def _content(response) -> str:
@@ -307,7 +317,7 @@ def _content(response) -> str:
     return extract_content_or_reasoning(response)
 
 
-def _cost(response) -> tuple[int, int, float | None, str]:
+def _cost(response, route: dict) -> tuple[int, int, float | None, str]:
     """(input tokens, output tokens, usd, status) from Hermes' own pricing; never a guess.
 
     The auxiliary client hands back a chat-completions response, so its usage is read in that
@@ -316,7 +326,7 @@ def _cost(response) -> tuple[int, int, float | None, str]:
     try:
         from agent.usage_pricing import estimate_usage_cost, normalize_usage
         usage = normalize_usage(getattr(response, "usage", None))
-        result = estimate_usage_cost(MODEL, usage, provider=PROVIDER)
+        result = estimate_usage_cost(route.get("model"), usage, provider=route.get("provider"))
         amount = float(result.amount_usd) if result.amount_usd is not None else None
         return usage.input_tokens, usage.output_tokens, amount, str(result.status)
     except Exception as exc:  # noqa: BLE001 — a missing price must not hide the points
@@ -385,12 +395,15 @@ def check(session_id, turn, now: float | None = None) -> dict:
         raise HTTPException(status_code=400, detail="session_id must be a non-empty string")
     if not _valid_turn(turn):
         raise HTTPException(status_code=400, detail="turn ids missing or malformed")
+    chosen = _chosen_route()
+    if chosen is None:
+        raise HTTPException(status_code=409, detail="no model chosen")
     at = round(now if now is not None else time.time(), 3)
     try:
         rows = read_turn(session_id, turn)
     except TurnUnreadable as exc:
         log.warning("asterisk: turn not readable (%s)", exc)
-        _record({"at": at, "model": MODEL, "error": "turn_unreadable"})
+        _record({"at": at, "provider": chosen["provider"], "model": chosen["model"], "error": "turn_unreadable"})
         raise HTTPException(status_code=409, detail="turn not readable") from exc
     chars = len(_text(rows[-1].get("content")))
     if chars < MIN_CHARS:
@@ -401,15 +414,17 @@ def check(session_id, turn, now: float | None = None) -> dict:
         log.warning("asterisk: redaction unavailable (%s); nothing sent", exc)
         raise HTTPException(status_code=500, detail="redaction unavailable") from exc
     started = time.monotonic()
+    route: dict = {}
     try:
-        response = _call_llm(build_messages(turn_text))
+        response = _call_llm(build_messages(turn_text), route)
     except Exception as exc:  # noqa: BLE001 — named to the user, the full error only logged
         log.warning("asterisk: model call failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"model call failed ({type(exc).__name__})") from exc
-    tokens_in, tokens_out, usd, status = _cost(response)
-    entry = {"at": at, "chars": chars, "model": MODEL, "input_tokens": tokens_in, "output_tokens": tokens_out,
-             "cost_usd": usd, "cost_status": status, "seconds": round(time.monotonic() - started, 2),
-             **stats, "turn_complete": turn.get("complete") is True}
+    tokens_in, tokens_out, usd, status = _cost(response, route)
+    model = route.get("model")
+    entry = {"at": at, "chars": chars, "provider": route.get("provider"), "model": model, "input_tokens": tokens_in,
+             "output_tokens": tokens_out, "cost_usd": usd, "cost_status": status,
+             "seconds": round(time.monotonic() - started, 2), **stats, "turn_complete": turn.get("complete") is True}
     try:
         points = _parse(_content(response))
     except (ValueError, TypeError) as exc:
@@ -419,7 +434,8 @@ def check(session_id, turn, now: float | None = None) -> dict:
     _record({**entry, "points": len(points), "kinds": [p["kind"] for p in points],
              "by": points[0]["by"] if points else None})
     title = read_title(session_id) if points else None
-    return {"points": points, "cost_usd": usd, "cost_status": status, "chars": chars, "at": at, "title": title}
+    return {"points": points, "cost_usd": usd, "cost_status": status, "chars": chars, "at": at, "title": title,
+            "model": model}
 
 
 def feedback(check_at, now: float | None = None) -> dict:

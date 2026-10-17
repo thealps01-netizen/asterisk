@@ -36,8 +36,21 @@ Hermes' own extension points.
    4,000; each intermediate step 2,000; tool call arguments 600; each tool result **2,000**; final
    reply 16,000. The whole turn is at most **32,000**: over that, whole steps are dropped oldest
    first and one line says how many; the user's message and the final reply are never dropped.
-6. The backend asks `claude-opus-5-5` on the `anthropic` provider through Hermes' auxiliary client
-   (`call_llm`, task `asterisk`, 700 output tokens, 90 s). The answer is strict JSON: no point,
+6. The backend names no model. `__init__.py` registers the auxiliary task `asterisk`, which is its
+   own row in Settings → Models → Auxiliary models; the provider and model come from that row, and
+   the call (`call_llm`, task `asterisk`, 700 output tokens, 90 s) passes neither. Before reading the
+   turn the backend asks Hermes whether a model is chosen for the task
+   (`agent.auxiliary_client._resolve_task_provider_model("asterisk")`, never `config.yaml` directly):
+   "auto" with no model means nothing is chosen, and `/check` answers 409 `no model chosen` without
+   opening the store, redacting, calling or recording anything; the desktop half shows one notice
+   per app start saying where to choose and keeps posting, so a model chosen mid-session works on
+   the next reply. It never falls back to the main model on its own: the check reviews the main
+   model's own turn, and each check spends money on the chosen model, so the user picks it ("Set to
+   main" on the row is the one-click way to use the main model). A lookup that raises is logged and
+   the check proceeds (fail-open; a real failure is then the call's 502). `call_llm` fills a
+   `route_info` dict with the provider and model that answered, a fallback included: the cost is
+   priced for that route, the ledger names it and `/check` returns its `model`, which the strip
+   shows. The answer is strict JSON: no point,
    or one point with a kind (`tradeoff`, `result`, `assumption`, `irreversible`, `security`, `cost`),
    `by` (`assistant` or `user`), the language of the final reply, a `headline` (the point as a short
    newspaper headline: at most 60 characters asked, at most 80 kept, cut with `…`) and one sentence,
@@ -59,14 +72,16 @@ Hermes' own extension points.
    only, so the strip follows the theme in light and dark; under reduced motion the stroke is shown
    drawn and nothing animates. No point, no note. A failed check is still one error toast.
 
-## Cost
+## Cost (measured on `claude-opus-5-5` only)
 
-A **measurement**, on 14 real turns from 6 sessions of one user (2026-10-17,
+A **measurement**, on 14 real turns from 6 sessions of one user (2026-10-17, with `claude-opus-5-5`
+on `anthropic`, the model 3.0.0 always used;
 `eval/compare_checkers.py`; dollars estimated by Hermes' price table for Opus 5.5: $4 per million
 input tokens, $20 per million output): mean about **$0.05** a check, range about $0.02–0.08 (input
 4,000–16,000 tokens, mean about 10,200). 1.0.0 cost about $0.019 on the same turns. At ~15 checks a
 day that is about $0.75/day, $22/month (1.0.0: about $8/month). One user's 14 turns are a small
-sample; the ledger has the real figure over time.
+sample; the ledger has the real figure over time. Other models are not measured: their cost and the
+quality of their points are unknown.
 
 Input is about 80% of the cost: the turn itself, capped at 32,000 characters. The rest is
 output, 8–782 tokens a check (mean about 470) even when the answer is `{"points": []}`. Those tokens
@@ -81,11 +96,14 @@ Naming the provider when reading it would read the Anthropic shape and count zer
 ## The ledger
 
 `<HERMES_HOME>/state/asterisk/ledger.jsonl`, one line per check: time, final reply length,
-model, input/output tokens, cost and its status, seconds, `points` (0 or 1), `kinds`, `by` (null,
+`provider` and `model` (the route that answered, a fallback included, as `call_llm` reported it;
+the same model id prices differently per provider), input/output tokens, cost and its status,
+seconds, `points` (0 or 1), `kinds`, `by` (null,
 `assistant` or `user`), `turn_chars`, `tool_results`, `truncated`, and `turn_complete` (the receipt's
 own flag). Never any text: not the turn, not the reply, not the point, its headline or the chat's
 title. A failed call writes no line; an unreadable answer writes one with `"points": null, "error":
-"unreadable"`; a turn that could not be read writes `{at, model, "error": "turn_unreadable"}`. Each
+"unreadable"`; a turn that could not be read writes `{at, provider, model, "error":
+"turn_unreadable"}` with the chosen route (no call was made); `no model chosen` writes nothing. Each
 "Already knew" writes `{at, "feedback": "already_knew", check_at}`, where `check_at` is the `at` of
 the check it answers. Lines written by 1.0.0 stay as they are.
 
@@ -108,6 +126,12 @@ points are mostly noise, turn the plugin off — it is opt-in value, not a safet
 
 ## Known limits
 
+- Whether a model is chosen is read from the core's private `_resolve_task_provider_model` rather
+  than re-derived from `config.yaml` (one rule, the core's). A core that renames or reshapes it
+  breaks the test; `tests/contract_core.py` seam `taskroute` locks it, and a lookup that raises is
+  fail-open.
+- A configured fallback chain may answer on another model than the one chosen; the ledger and the
+  strip then name the model that answered, and the cost is priced for it.
 - A chat whose id context compression rotated may show no sidebar dot (the SDK has no way to match
   the new id to its row); the strip still shows the note.
 - Every composer (split view) shows the same pending list: `composer.top` does not say which chat a

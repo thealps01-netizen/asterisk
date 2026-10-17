@@ -1,7 +1,7 @@
 {
   "name": "asterisk",
   "label": "Asterisk",
-  "description": "After a long reply, a second model (Opus) rereads the turn and names the one thing the reply did not plainly tell you; nothing to flag, nothing shown.",
-  "version": "3.0.0",
+  "description": "After a long reply, a second model (the model you choose for it in Settings → Models) rereads the turn and names the one thing the reply did not plainly tell you; nothing to flag, nothing shown.",
+  "version": "4.0.0",
   "api": "plugin_api.py"
 }

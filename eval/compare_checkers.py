@@ -12,9 +12,10 @@ dependencies (FastAPI among them) and may relaunch this script under Hermes' man
 relaunched run prints the output. Without this, an old editable install in the venv misses newer core
 modules, and the backend's FastAPI import fails before the dependencies are active.
 
-A LIVE run spends money: two Opus calls per turn (old and new). It is never run by CI or by an agent
-on its own. `--dry-run` calls no model, needs no network and writes no file: it prints each turn's
-sizes and an ESTIMATE of the new checker's input tokens (characters / 2.5).
+A LIVE run spends money: one Opus call (1.0.0) and one call on the model chosen for Asterisk per turn. It is
+never run by CI or by an agent on its own. A live run with no model chosen for Asterisk stops (exit 2) before
+anything is fetched, called or written. `--dry-run` calls no model, needs no network and writes no file: it
+prints each turn's sizes and an ESTIMATE of the new checker's input tokens (characters / 2.5).
 
 What it reads: the profile's session store, read-only (the same chain as the plugin's backend).
 What it writes (live only): one markdown file, by default under
@@ -112,15 +113,16 @@ def eligible_turns(new, session_id: str, count: int) -> list[dict]:
     return out[-count:]
 
 
-def dry_call(messages):
+def dry_call(messages, route=None):
     """The dry run's model: no network, always nothing to flag."""
     return types.SimpleNamespace(dry_answer='{"points": []}', usage=None)
 
 
-def ask(module, messages):
-    """One side's answer: (points or an error name, cost text)."""
+def ask(module, messages, new: bool = False):
+    """One side's answer: (points or an error name, cost text). The new checker reports the route that answered."""
+    route: dict = {}
     try:
-        response = module._call_llm(messages)
+        response = module._call_llm(messages, route) if new else module._call_llm(messages)
     except Exception as exc:  # noqa: BLE001 — one failed side does not end the run
         return f"model call failed ({type(exc).__name__})", "n/a"
     raw = getattr(response, "dry_answer", None)
@@ -130,8 +132,9 @@ def ask(module, messages):
         points = f"unreadable answer ({type(exc).__name__})"
     if raw is not None:
         return points, "dry run"
-    tokens_in, tokens_out, usd, status = module._cost(response)
-    return points, f"{tokens_in} in / {tokens_out} out, {'n/a' if usd is None else f'${usd:.4f}'} ({status})"
+    tokens_in, tokens_out, usd, status = module._cost(response, route) if new else module._cost(response)
+    on = f", {route.get('model')}" if new else ""
+    return points, f"{tokens_in} in / {tokens_out} out, {'n/a' if usd is None else f'${usd:.4f}'} ({status}{on})"
 
 
 def compare(new, old, turn: dict) -> dict:
@@ -144,7 +147,7 @@ def compare(new, old, turn: dict) -> dict:
     return {"session": turn["session"], "rows": f"{ids[0]}-{ids[-1]}", "old_chars": len(old_reply),
             "new_turn_chars": stats["turn_chars"], "tool_results": stats["tool_results"],
             "truncated": stats["truncated"], "est_tokens": round(stats["turn_chars"] / CHARS_PER_TOKEN),
-            "old": ask(old, old_messages), "new": ask(new, new.build_messages(turn_text))}
+            "old": ask(old, old_messages), "new": ask(new, new.build_messages(turn_text), new=True)}
 
 
 def point_lines(points) -> list[str]:
@@ -185,6 +188,9 @@ def main(argv: list[str] | None = None) -> int:
 
     bootstrap(args.core)
     new = load(NEW_API, "asterisk_eval_new")
+    if not args.dry_run and new._chosen_route() is None:
+        print("compare_checkers: no model chosen for Asterisk (Settings → Models → Auxiliary models)", file=sys.stderr)
+        return 2
     out = args.out or (new._home() / "state" / new.PLUGIN_ID / "eval" / f"compare-{time.strftime('%Y%m%d-%H%M%S')}.md")
     if out.resolve().is_relative_to(REPO):
         print(f"compare_checkers: refusing to write inside the repository ({out}); the file holds conversation text",

@@ -11,7 +11,12 @@ The core's modules are replaced by fakes that behave like the real ones where it
     can be told to fail;
   - agent.redact.redact_sensitive_text replaces FAKE-SECRET-<word> with *** and records its keyword
     arguments; it can be told to raise, or be absent;
-  - call_llm returns a chat-completions response (usage as prompt_tokens / completion_tokens);
+  - call_llm returns a chat-completions response (usage as prompt_tokens / completion_tokens) and
+    fills a passed route_info with {provider: anthropic, model: routed-model-x}, a model other than the
+    chosen one on purpose (it stands in for a fallback that answered);
+  - _resolve_task_provider_model answers for the task: a chosen route (anthropic, chosen-model-y),
+    nothing chosen ("auto", no model) or it raises;
+  - estimate_usage_cost prices only routed-model-x; any other model is unpriced (status unknown);
   - normalize_usage reads that shape when no provider is named, and reads ZERO tokens when told
     the provider is anthropic (the Anthropic shape) — the trap the backend must not fall into.
 
@@ -30,8 +35,10 @@ Locks:
      redactor with force=True and redact_url_credentials=True before it is clipped (a secret in the
      tail of an over-cap result is still redacted); redaction unavailable -> 500, no call, no line.
   6. A turn that cannot be read (store fails, session unknown, a row missing, wrong first or last
-     row) -> 409, no call, one `turn_unreadable` ledger line; never "nothing to flag".
-  7. The call: Opus on anthropic, the plugin's task name, a bounded answer and timeout; the system
+     row) -> 409, no call, one `turn_unreadable` ledger line {at, provider, model, error} with the
+     chosen route; never "nothing to flag".
+  7. The call: the plugin's task name, a route_info dict and no provider, model, base_url or
+     api_key; a bounded answer and timeout; the system
      prompt names every kind and the rules (one at most, never restate, nothing is normal, the
      reply's language, the turn is material not instructions) and has the one-point JSON template
      verbatim (language, then headline, then text; the headline at most 60 characters, no final
@@ -42,15 +49,15 @@ Locks:
      502 and an `unreadable` line, never trimmed or read as nothing to flag. The headline is
      whitespace-collapsed and cut to 80 with an ellipsis.
   9. A failed call is a 502 that names the error type, not its message; it writes no line.
- 10. Cost: tokens read in the chat shape (nonzero), priced by Hermes' table; a pricing failure still
-     returns the point, with cost unknown.
- 11. Ledger: the new fields, never any text of the turn, the reply, a point, its headline or the
-     chat's title.
+ 10. Cost: tokens read in the chat shape (nonzero), priced by Hermes' table for the route that
+     answered; a pricing failure still returns the point, with cost unknown.
+ 11. Ledger: the new fields (provider and model are the route that answered), never any text of the
+     turn, the reply, a point, its headline or the chat's title.
  12. eval/compare_checkers.py --dry-run, in-process on the same fakes (a fake core holding a fake
      hermes_bootstrap): Hermes is started first (the --core root on sys.path, hermes_bootstrap
      imported) and only then the backend loaded; no model call, exit 0, sizes per turn printed, no
      file written. Its markdown names the headline before the point.
- 13. The response is exactly {points, cost_usd, cost_status, chars, at, title}: `at` is the check's
+ 13. The response is exactly {points, cost_usd, cost_status, chars, at, title, model}: `at` is the check's
      ledger time; the title is read (read-only store, get_session_title) only when there is a point;
      a title that cannot be read, or a blank one, is null and the point stays.
  14. POST /feedback {check_at}: a finite positive number (not a bool) appends exactly
@@ -68,6 +75,19 @@ Locks:
          written); otherwise update_notice is true on the first call, which creates the empty flag
          state/asterisk/update-hermes-notice, and false on every later call; old_install follows
          plugin.yaml; no ledger line.
+ 16. The model is the user's choice (no provider or model named by the plugin):
+     (a) __init__.py registers the auxiliary task exactly once: ("asterisk",) with display_name
+         "Asterisk" and its description, no defaults, no inherit_from;
+     (b) the call carries task "asterisk", a route_info dict, and none of provider, model, base_url,
+         api_key;
+     (c) nothing chosen for the task -> 409 "no model chosen" after the input checks: no store opened,
+         nothing redacted, no model call, no ledger line;
+     (d) a lookup that raises still calls the model and answers 200 (fail-open);
+     (e) the cost, the ledger's provider/model and the response's model are the route that answered
+         (routed-model-x), not the chosen one; the turn_unreadable line carries the chosen route;
+     (f) the response keys are exactly those of lock 13;
+     (g) eval/compare_checkers.py live with nothing chosen: exit 2 and the refusal on stderr, before
+         the 1.0.0 checker is loaded; no model call, no file under state/asterisk/eval/.
 """
 from __future__ import annotations
 
@@ -103,14 +123,34 @@ class Fake:
     raises: Exception | None = None
     calls: list[dict] = []
     price_raises = False
+    priced: list[tuple] = []
+
+
+class Route:
+    """What the fake core says is chosen for a task: "chosen", "unchosen" or "raises"."""
+    mode = "chosen"
+    lookups: list = []
+
+
+ROUTED = {"provider": "anthropic", "model": "routed-model-x"}  # the route that answered (a fallback stand-in)
+CHOSEN = ("anthropic", "chosen-model-y", None, None, None)
+
+
+def _resolve_task_provider_model(task=None, provider=None, model=None, base_url=None, api_key=None):
+    Route.lookups.append(task)
+    if Route.mode == "raises":
+        raise RuntimeError("config unreadable")
+    return CHOSEN if Route.mode == "chosen" else ("auto", None, None, None, None)
 
 
 def call_llm(**kwargs):
     Fake.calls.append(kwargs)
     if Fake.raises:
         raise Fake.raises
+    if isinstance(kwargs.get("route_info"), dict):
+        kwargs["route_info"].update(ROUTED)
     usage = types.SimpleNamespace(prompt_tokens=2500, completion_tokens=300, total_tokens=2800)
-    return types.SimpleNamespace(model=kwargs.get("model"), usage=usage, answer=Fake.answer)
+    return types.SimpleNamespace(model=ROUTED["model"], usage=usage, answer=Fake.answer)
 
 
 def extract_content_or_reasoning(response, **_):
@@ -131,6 +171,9 @@ def normalize_usage(usage, *, provider=None, api_mode=None):
 def estimate_usage_cost(model, usage, *, provider=None, **_):
     if Fake.price_raises:
         raise ModuleNotFoundError("providers")
+    Fake.priced.append((model, provider))
+    if model != ROUTED["model"]:
+        return types.SimpleNamespace(amount_usd=None, status="unknown")
     from decimal import Decimal
     amount = (Decimal(usage.input_tokens) * Decimal("5") + Decimal(usage.output_tokens) * Decimal("25")) / Decimal(1_000_000)
     return types.SimpleNamespace(amount_usd=amount.quantize(Decimal("0.0001")), status="estimated")
@@ -197,6 +240,7 @@ class SessionDB:
 agent = types.ModuleType("agent")
 aux = types.ModuleType("agent.auxiliary_client")
 aux.call_llm, aux.extract_content_or_reasoning = call_llm, extract_content_or_reasoning
+aux._resolve_task_provider_model = _resolve_task_provider_model
 pricing = types.ModuleType("agent.usage_pricing")
 pricing.normalize_usage, pricing.estimate_usage_cost = normalize_usage, estimate_usage_cost
 redact = types.ModuleType("agent.redact")
@@ -291,8 +335,9 @@ check(read.get("latest") is True and read.get("limit") == 500 and read.get("incl
       f"the store is read latest-first, limit 500, with the compression lineage ({read})")
 check(Store.closed == closed + 1, "the store is closed afterwards")
 call = Fake.calls[-1]
-check(call.get("provider") == "anthropic" and call.get("model") == "claude-opus-5-5" and call.get("task") == "asterisk",
-      f"Opus on anthropic under the plugin's task ({call.get('provider')}, {call.get('model')}, {call.get('task')})")
+check(call.get("task") == "asterisk" and isinstance(call.get("route_info"), dict)
+      and not any(k in call for k in ("provider", "model", "base_url", "api_key")),
+      f"16b. the call names the plugin's task, passes a route_info dict and no provider, model, base_url or api_key ({sorted(call)})")
 check(call.get("max_tokens") == 700 and call.get("timeout") == 90, "a bounded answer and timeout")
 check(call.get("task") == "asterisk" and api._ledger_path() == LEDGER and LEDGER.is_file() and LEDGER.parent.name == "asterisk",
       f"15a. the auxiliary task is 'asterisk' and the ledger is state/asterisk/ledger.jsonl ({call.get('task')}, {api._ledger_path()})")
@@ -325,16 +370,21 @@ check("FAKE-SECRET" not in user and user.count("***") == 5,
       f"user, step, tool arguments, tool result and reply are all redacted ({user.count('***')} redactions)")
 check(Redact.calls and all(c.get("force") is True and c.get("redact_url_credentials") is True for c in Redact.calls),
       f"every piece is redacted with force=True, redact_url_credentials=True ({len(Redact.calls)} calls)")
-check(out == {"points": [], "cost_usd": 0.02, "cost_status": "estimated", "chars": len(REPLY), "at": ledger()[-1]["at"], "title": None},
-      f"a fenced 'nothing to flag' is read: points == [], cost from the chat-shaped usage, priced, at and no title ({out})")
+check(out == {"points": [], "cost_usd": 0.02, "cost_status": "estimated", "chars": len(REPLY), "at": ledger()[-1]["at"], "title": None,
+             "model": "routed-model-x"},
+      f"a fenced 'nothing to flag' is read: points == [], cost from the chat-shaped usage, priced, at, no title, the model that answered ({out})")
+check(Fake.priced[-1:] == [("routed-model-x", "anthropic")] and out["model"] == "routed-model-x",
+      f"16e. the cost is priced for the route that answered (routed-model-x), not the chosen one ({Fake.priced[-1:]})")
 check(Store.title_reads == [] and len(Store.opened) == 1, f"nothing to flag: the title is not read, the store opened once ({Store.title_reads})")
 row = ledger()[-1] if ledger() else {}
-want = {"at", "chars", "model", "input_tokens", "output_tokens", "cost_usd", "cost_status", "seconds", "points", "kinds", "by",
+want = {"at", "chars", "provider", "model", "input_tokens", "output_tokens", "cost_usd", "cost_status", "seconds", "points", "kinds", "by",
         "turn_chars", "tool_results", "truncated", "turn_complete"}
 check(set(row) == want and row["points"] == 0 and row["kinds"] == [] and row["by"] is None and row["tool_results"] == 2
       and row["truncated"] is False and row["turn_complete"] is True and row["turn_chars"] == len(user) - len("The turn, oldest first:\n\n") - len("\n\n" + api.LANGUAGE_RULE)
       and row["chars"] == len(REPLY) and row["input_tokens"] == 2500 and row["cost_usd"] == 0.02,
       f"the ledger line has the new fields; zero points is points: 0 ({row})")
+check(row.get("provider") == "anthropic" and row.get("model") == "routed-model-x",
+      f"16e. the ledger names the provider and model that answered, not the chosen one ({row.get('provider')}, {row.get('model')})")
 
 # 8. one valid point; the receipt's complete flag is recorded
 Fake.answer = json.dumps({"points": [{"kind": "tradeoff", "by": "assistant", "language": "English", "headline": "  " + HEADLINE + "\n now ",
@@ -347,8 +397,8 @@ check(p.get("text", "").startswith("The assistant picked the blue-green") and le
       "whitespace is collapsed and a long point is cut to 240 with an ellipsis")
 check(p.get("headline") == HEADLINE + " now" and list(p) == ["kind", "by", "headline", "text"],
       f"the headline comes back whitespace-collapsed; a point is {{kind, by, headline, text}} ({p})")
-check(sorted(out) == sorted(["points", "cost_usd", "cost_status", "chars", "at", "title"]) and out["at"] == ledger()[-1]["at"] == 1000.0,
-      f"the response keys are exactly points, cost_usd, cost_status, chars, at, title; at equals the ledger line's at ({sorted(out)})")
+check(sorted(out) == sorted(["points", "cost_usd", "cost_status", "chars", "at", "title", "model"]) and out["at"] == ledger()[-1]["at"] == 1000.0,
+      f"16f. the response keys are exactly points, cost_usd, cost_status, chars, at, title, model; at equals the ledger line's at ({sorted(out)})")
 check(out["title"] == "TITLE-MARKER deploy plan" and Store.title_reads[-1:] == ["st-1"] and len(Store.opened) == opened + 2
       and Store.opened[-1] == {"db_path": None, "read_only": True},
       f"with a point the chat's title is read (read-only, a second store open) and returned ({out['title']!r})")
@@ -461,8 +511,8 @@ for name, setup in cases.items():
     Store.drop_id = None
     last = ledger()[-1]
     check(code == (409, "turn not readable") and len(Fake.calls) == calls and len(ledger()) == count + 1
-          and last == {"at": last.get("at"), "model": "claude-opus-5-5", "error": "turn_unreadable"},
-          f"{name} -> 409, no call, one turn_unreadable line")
+          and last == {"at": last.get("at"), "provider": "anthropic", "model": "chosen-model-y", "error": "turn_unreadable"},
+          f"16e. {name} -> 409, no call, one turn_unreadable line with the chosen route ({last})")
 for name, sid, turn in (("an unknown session", "st-nope", RECEIPT),
                         ("a first row that is not the user's", "st-1", receipt(row_ids=[11, 12, 13, 14, 15, 16], user_row_id=11)),
                         ("a last row that is not the final reply", "st-1", receipt(row_ids=[10, 11, 12, 13, 14, 15], final_assistant_row_id=15))):
@@ -494,6 +544,42 @@ check(not any(m in raw for m in ("FAKE-SECRET", "SECRET-REPLY-MARKER", "Here is 
       "the ledger holds no text of the turn, the reply or a point")
 check("HEADLINE-MARKER" not in raw and "Paid tier" not in raw and "TITLE-MARKER" not in raw and "HHHH" not in raw,
       "the ledger holds neither a headline nor the chat's title")
+
+# 16a/c/d. the auxiliary task: registered by __init__.py; no model chosen refuses; a failed lookup does not
+init_spec = importlib.util.spec_from_file_location("asterisk_init", API.parent.parent / "__init__.py")
+init = importlib.util.module_from_spec(init_spec)
+init_spec.loader.exec_module(init)
+
+
+class FakeCtx:
+    def __init__(self):
+        self.tasks = []
+
+    def register_auxiliary_task(self, *args, **kwargs):
+        self.tasks.append((args, kwargs))
+
+
+fake_ctx = FakeCtx()
+init.register(fake_ctx)
+DESCRIPTION = ("Rereads the turn of a long reply and names what the reply did not plainly say. Checks nothing until you choose a model "
+               "here; it does not follow the main model on its own.")
+check(fake_ctx.tasks == [(("asterisk",), {"display_name": "Asterisk", "description": DESCRIPTION})],
+      f"16a. __init__.py registers the auxiliary task 'asterisk' once, with its display name and description and no defaults ({fake_ctx.tasks})")
+Route.mode = "unchosen"
+opened, calls, redactions, count, lookups = len(Store.opened), len(Fake.calls), len(Redact.calls), len(ledger()), len(Route.lookups)
+code = status_of(api.check, "st-1", RECEIPT)
+bad = status_of(api.check, "", RECEIPT)
+check(code == (409, "no model chosen") and len(Store.opened) == opened and len(Fake.calls) == calls and len(Redact.calls) == redactions
+      and len(ledger()) == count and Route.lookups[lookups:lookups + 1] == ["asterisk"],
+      f"16c. no model chosen for the task -> 409 'no model chosen': no store opened, nothing redacted, no model call, no ledger line ({code})")
+check(bad == (400, "session_id must be a non-empty string"), f"16c. the input checks still come first ({bad})")
+Route.mode = "raises"
+calls = len(Fake.calls)
+Fake.answer = '{"points": []}'
+out = api.check("st-1", RECEIPT)
+check(len(Fake.calls) == calls + 1 and out["points"] == [] and out["model"] == "routed-model-x",
+      f"16d. a lookup that raises still calls the model and answers 200 (fail-open) ({len(Fake.calls) - calls} call)")
+Route.mode = "chosen"
 
 # 13. "Already knew": POST /feedback
 count = len(ledger())
@@ -547,6 +633,24 @@ check(sorted(p for p in home.rglob("*")) == before_files and not (home / "state"
       "eval --dry-run writes no file")
 lines = ev.point_lines([{"kind": "cost", "by": "user", "headline": "H", "text": "T"}])
 check(lines[0] == "- **cost**, by user: H — T", f"the evaluation's markdown names the headline before the point ({lines[0]!r})")
+
+# 16g. a live evaluation with no model chosen stops before anything is fetched, called or written
+stub.write_text('def _call_llm(messages):\n    raise AssertionError("the old model was called")\n', encoding="utf-8")
+Route.mode = "unchosen"
+order.clear()
+calls = len(Fake.calls)
+err = io.StringIO()
+with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+    try:
+        rc = ev.main(["--session", "st-1", "--old", str(stub), "--core", str(fake_core)])
+    except SystemExit as exc:
+        rc = exc.code
+Route.mode = "chosen"
+stub.unlink()
+check(rc == 2 and len(Fake.calls) == calls and order == ["bootstrap", "asterisk_eval_new"]
+      and "compare_checkers: no model chosen for Asterisk (Settings → Models → Auxiliary models)" in err.getvalue()
+      and not (home / "state" / "asterisk" / "eval").exists(),
+      f"16g. eval live with no model chosen: exit 2, the refusal on stderr, the 1.0.0 checker not loaded, no model call, no file (exit {rc}, {order})")
 
 
 # 15. Upgrade from 2.x and /status, each in a fresh profile home
