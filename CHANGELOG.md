@@ -5,7 +5,8 @@
 - Reads the whole last turn, not the reply alone: the user's message, the assistant's tool calls and
   their results, and the final reply, read-only from the profile's own store by the frame's
   `persisted_turn` row ids. Every piece is redacted (Hermes' redactor, forced) and capped (32,000
-  characters a turn, oldest steps dropped first); reasoning is never sent.
+  characters a turn, oldest steps dropped first); reasoning is never sent. A literal `<turn>` or
+  `</turn>` in that text is rewritten to `[turn]` / `[/turn]`, so it cannot break the prompt's frame.
 - At most one point, or none (the normal answer): something the turn shows that the reply did not
   plainly say, and who decided it (`by`: the assistant or the user).
 - Six new kinds: tradeoff, result may be off, assumption, cannot be undone, security, cost. "Your

@@ -62,6 +62,8 @@ MUTATIONS = [
      "{_clip(_text(row.get('content')), MAX_TOOL_RESULT_CHARS)}"),
     ("redaction is not forced", API, "redact_sensitive_text(text, force=True, redact_url_credentials=True)",
      "redact_sensitive_text(text, redact_url_credentials=True)"),
+    ("a </turn> in the turn's text closes the frame early", API, "        redacted = _unframe(_redact(text))\n",
+     "        redacted = _redact(text)\n"),
     # caps
     ("the per-tool-result cap is removed", API, "piece(_text(row.get('content')), MAX_TOOL_RESULT_CHARS)",
      "piece(_text(row.get('content')), 10**9)"),

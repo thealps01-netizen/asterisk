@@ -114,6 +114,14 @@ def _clip(text: str, limit: int) -> str:
     return f"{text[:half]}\n\n[... {len(text) - limit} characters cut ...]\n\n{text[-half:]}"
 
 
+_TURN_TAG = re.compile(r"<\s*(/?)\s*turn\b[^>]*>", re.IGNORECASE)
+
+
+def _unframe(text: str) -> str:
+    """Text inside the frame cannot open or close it: <turn> and </turn> become [turn] and [/turn]."""
+    return _TURN_TAG.sub(r"[\1turn]", text)
+
+
 def _redact(text: str) -> str:
     """Hermes' own redaction, forced on: this text leaves for another model call."""
     try:
@@ -180,7 +188,7 @@ def build_turn(rows: list[dict]) -> tuple[str, dict]:
 
     def piece(text: str, limit: int) -> str:
         nonlocal clipped
-        redacted = _redact(text)
+        redacted = _unframe(_redact(text))
         clipped = clipped or len(redacted) > limit
         return _clip(redacted, limit)
 
@@ -200,9 +208,9 @@ def build_turn(rows: list[dict]) -> tuple[str, dict]:
                 fn = (call.get("function") or {}) if isinstance(call, dict) else {}
                 args = fn.get("arguments", "")
                 args = args if isinstance(args, str) else json.dumps(args, ensure_ascii=False)
-                steps.append(f"[tool call: {fn.get('name', '?')}] {piece(args, MAX_TOOL_ARGS_CHARS)}")
+                steps.append(f"[tool call: {_unframe(str(fn.get('name', '?')))}] {piece(args, MAX_TOOL_ARGS_CHARS)}")
         elif role == "tool":
-            steps.append(f"[tool result: {row.get('tool_name') or '?'}]\n{piece(_text(row.get('content')), MAX_TOOL_RESULT_CHARS)}")
+            steps.append(f"[tool result: {_unframe(str(row.get('tool_name') or '?'))}]\n{piece(_text(row.get('content')), MAX_TOOL_RESULT_CHARS)}")
 
     def render(chosen: list[str], omitted: int) -> str:
         blocks = [user] + ([f"[... {omitted} earlier steps omitted ...]"] if omitted else []) + chosen + [reply]

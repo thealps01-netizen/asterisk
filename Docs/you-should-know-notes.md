@@ -28,6 +28,8 @@ mod from the Claude Code mods video (2026-10), rebuilt on Hermes' own extension 
 4. Every piece — the user's message, the assistant's intermediate text, each tool call's arguments,
    each tool result, the final reply — goes through Hermes' redactor (`redact_sensitive_text`,
    `force=True`, `redact_url_credentials=True`) before it is cut. No redactor, no call (500).
+   Then every `<turn>` or `</turn>` inside a piece (any case, spaces allowed) becomes `[turn]` or
+   `[/turn]`, so a web page or file in a tool result cannot close the prompt's `<turn>` frame early.
    Reasoning is never sent.
 5. Caps, in characters (a cut piece keeps its head and its tail, with a marked cut): user message
    4,000; each intermediate step 2,000; tool call arguments 600; each tool result **2,000**; final
