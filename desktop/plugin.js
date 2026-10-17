@@ -180,7 +180,7 @@ export function createWatcher(ctx, hostApi = host) {
 // Typography, hairlines and the stroke only: no box, no fill, no icon. Every colour is an app theme
 // token, so the strip follows the theme and light/dark. Animation runs under data-motion="full" only.
 const CSS = `
-.ysk-strip{min-width:0;max-height:280px;overflow-y:auto;padding:12px 14px 4px;font-family:var(--font-sans);border-bottom:1px solid var(--ui-stroke-quaternary)}
+.ysk-strip{min-width:0;max-height:360px;overflow-y:auto;padding:12px 14px 4px;font-family:var(--font-sans);border-bottom:1px solid var(--ui-stroke-quaternary)}
 .ysk-label{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;line-height:1.4}
 .ysk-label-name{color:var(--ui-accent);font-weight:600}
 .ysk-label-count{color:var(--ui-text-tertiary)}
