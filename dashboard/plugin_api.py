@@ -2,8 +2,10 @@
 
 Routes (mounted at /api/plugins/asterisk/):
   POST /check     {session_id, turn}  -> {points: [] | [{kind, by, headline, text}], cost_usd, cost_status,
-                                          chars, at, title}
-  POST /feedback  {check_at}          -> {ok: true}   (the user dismissed that check's note: "Already knew")
+                                          chars, at, title, model}
+  POST /dismiss   {check_at, signal}  -> {ok: true}   (the user dismissed that check's note: asked, read or
+                                                       already_knew)
+  POST /notes     {}                  -> {notes: [...]}   (the pending notes, once per app start)
   POST /status    {desktop_ready}     -> {ready, update_notice, old_install}   (once per app start)
 
 The desktop half calls it for every finished reply of a chat the user opened, once per reply.
@@ -21,10 +23,12 @@ a title that cannot be read is null, never an error and never a lost point.
 
 What it writes: one line per check to <HERMES_HOME>/state/asterisk/ledger.jsonl — time, reply
 length, tokens, cost, whether there was a point, its kind and who decided, the turn's size; one line
-per skip with only its time and reason; and one line per "Already knew" with only its time and the
-check's `at`. Never any text: not the turn, not the
+per skip with only its time and reason; and one line per dismissal with only its time, its signal and
+the check's `at`. Never any text: not the turn, not the
 reply, not the point, not its headline, not the chat's title. That ledger is what the cost review
-reads (see Docs/asterisk-notes.md).
+reads (see Docs/asterisk-notes.md). For the development phase, each pending note (the /check answer
+with its chat, text included) is also kept in <HERMES_HOME>/plugin-data/asterisk/notes.json until it
+is dismissed, apart from the ledger.
 
 Upgrade from 2.x (OLD_ID): while that package is installed in this profile, /check refuses (409), so
 no reply is ever checked twice. Once it is gone, the first ledger line copies 2.x's ledger over, byte
@@ -77,6 +81,7 @@ KINDS = ("tradeoff", "result", "assumption", "irreversible", "security", "cost",
 PRIORITY = (("irreversible", "security"), ("unanswered", "overclaim", "constraint"), ("result", "cost"),
             ("tradeoff", "assumption", "overreach"))
 BY = ("assistant", "user")
+SIGNALS = ("asked", "read", "already_knew")
 _PRIORITY_LINES = "\n".join(f"{n}. {', '.join(group)}" for n, group in enumerate(PRIORITY, 1))
 
 SYSTEM_PROMPT = f"""You review one turn of a conversation between a user and an AI assistant: the user's message, the
@@ -468,6 +473,107 @@ def _record(entry: dict) -> None:
         log.warning("asterisk: ledger not written (%s)", type(exc).__name__)
 
 
+def _positive(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
+
+
+NOTES_FILE = "notes.json"
+NOTES_MAX = 50
+_notes_lock = threading.Lock()
+
+
+def _notes_file() -> Path | None:
+    try:
+        from plugins.plugin_storage import plugin_data_dir
+        return plugin_data_dir(PLUGIN_ID) / NOTES_FILE
+    except Exception as exc:
+        log.warning("asterisk: note storage unavailable (%s)", type(exc).__name__)
+        return None
+
+
+def _stored(entry) -> bool:
+    return (isinstance(entry, dict) and _positive(entry.get("at")) and isinstance(entry.get("session_id"), str)
+            and bool(entry["session_id"].strip()))
+
+
+def _read_notes(path: Path) -> list[dict]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError) as exc:
+        log.warning("asterisk: notes not read (%s)", type(exc).__name__)
+        return []
+    if not isinstance(data, list):
+        log.warning("asterisk: notes not read (%s)", "not a list")
+        return []
+    return [entry for entry in data if _stored(entry)]
+
+
+def _write_notes(path: Path, entries: list[dict]) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(entries, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _change_notes(change) -> None:
+    path = _notes_file()
+    if path is None:
+        return
+    try:
+        with _notes_lock:
+            entries = change(_read_notes(path))
+            if entries is not None:
+                _write_notes(path, entries)
+    except OSError as exc:
+        log.warning("asterisk: notes not written (%s)", type(exc).__name__)
+
+
+def _keep_note(entry: dict) -> None:
+    _change_notes(lambda entries: (entries + [entry])[-NOTES_MAX:])
+
+
+def _drop_note(check_at) -> None:
+    def drop(entries: list[dict]) -> list[dict] | None:
+        kept = [entry for entry in entries if entry["at"] != check_at]
+        return kept if len(kept) != len(entries) else None
+    _change_notes(drop)
+
+
+def _gone_chats(entries: list[dict]) -> set[str]:
+    if not entries:
+        return set()
+    try:
+        from hermes_state import SessionDB
+        db = SessionDB(read_only=True)
+    except Exception as exc:
+        log.warning("asterisk: chats not checked (%s)", type(exc).__name__)
+        return set()
+    try:
+        return {sid for sid in {entry["session_id"] for entry in entries} if db.resolve_session_id(sid) is None}
+    except Exception as exc:
+        log.warning("asterisk: chats not checked (%s)", type(exc).__name__)
+        return set()
+    finally:
+        db.close()
+
+
+def notes() -> dict:
+    path = _notes_file()
+    if path is None:
+        raise HTTPException(status_code=503, detail="note storage unavailable")
+    with _notes_lock:
+        entries = _read_notes(path)
+        gone = _gone_chats(entries)
+        if gone:
+            entries = [entry for entry in entries if entry["session_id"] not in gone]
+            try:
+                _write_notes(path, entries)
+            except OSError as exc:
+                log.warning("asterisk: notes not written (%s)", type(exc).__name__)
+    return {"notes": entries}
+
+
 def _is_id(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
@@ -554,16 +660,23 @@ def check(session_id, turn, now: float | None = None) -> dict:
     _record({**entry, "points": len(points), "kinds": [p["kind"] for p in points],
              "by": points[0]["by"] if points else None})
     title = read_title(session_id) if points else None
+    if points:
+        note = {"session_id": session_id, "at": at, "title": title, "model": model, "cost_usd": usd, "cost_status": status,
+                "points": points}
+        _keep_note(note)
     return {"points": points, "cost_usd": usd, "cost_status": status, "chars": chars, "at": at, "title": title,
             "model": model}
 
 
-def feedback(check_at, now: float | None = None) -> dict:
-    """An "Already knew" for the check recorded at `check_at`: one ledger line, no text."""
-    if (not isinstance(check_at, (int, float)) or isinstance(check_at, bool) or not math.isfinite(check_at)
-            or check_at <= 0):
+def dismiss(check_at, signal, now: float | None = None) -> dict:
+    """A dismissal of the note of the check recorded at `check_at`: one ledger line with its signal, no text;
+    the stored note goes."""
+    if not _positive(check_at):
         raise HTTPException(status_code=400, detail="check_at must be a positive number")
-    _record({"at": round(now if now is not None else time.time(), 3), "feedback": "already_knew", "check_at": check_at})
+    if signal not in SIGNALS:
+        raise HTTPException(status_code=400, detail="signal must be asked, read or already_knew")
+    _record({"at": round(now if now is not None else time.time(), 3), "feedback": signal, "check_at": check_at})
+    _drop_note(check_at)
     return {"ok": True}
 
 
@@ -603,9 +716,15 @@ def check_route(body: dict):
     return check(body.get("session_id"), body.get("turn"))
 
 
-@router.post("/feedback")
-def feedback_route(body: dict):
-    return feedback(body.get("check_at") if isinstance(body, dict) else None)
+@router.post("/dismiss")
+def dismiss_route(body: dict):
+    body = body if isinstance(body, dict) else {}
+    return dismiss(body.get("check_at"), body.get("signal"))
+
+
+@router.post("/notes")
+def notes_route(body: dict):
+    return notes()
 
 
 @router.post("/status")

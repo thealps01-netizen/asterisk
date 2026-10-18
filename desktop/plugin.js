@@ -15,16 +15,19 @@
  * A point becomes a note in the "Worth knowing" strip at the top of the composer (`composer.top`):
  * the headline in a serif, underlined by a stroke in the theme's accent; with several notes, a
  * numbered list in arrival order. A note of the focused chat (or the only note) shows its sentence,
- * the check's cost and who decided, and "Already knew" / "Got it"; a note of another chat is one
- * line with that chat's title and "Open". A note stays until "Already knew" or "Got it" removes it;
- * only "Already knew" is recorded (POST /feedback, no text). The sidebar row of a chat with a
- * pending note carries a dot in the accent (`sessionRow.trailing`). Notes live in memory only and
- * are gone after a restart. With a Hermes pet on screen it also says so in its bubble. Reduced
- * motion: no stroke drawing and no stagger.
+ * the check's cost and who decided, and "Already knew" / "Got it", plus "Ask in chat" for the focused
+ * chat's note (it puts the note into that chat's input through host.composer.insertText, never
+ * sends) or "Open" for another chat's; a note of another chat is otherwise one line with that chat's
+ * title and "Open". A chevron folds the strip to its label; a new note unfolds it. A note stays until
+ * one of the three buttons removes it, and each removal is recorded (POST /dismiss with asked, read
+ * or already_knew, no text). The sidebar row of a chat with a pending note carries a dot in the
+ * accent (`sessionRow.trailing`). For the development phase the backend keeps the pending notes, and
+ * they are restored (POST /notes) after a restart. With a Hermes pet on screen it also says so in its
+ * bubble. Reduced motion: no stroke drawing and no stagger.
  *
  * Each reply is checked once. A failed check is one error notice, named, never swallowed. The
- * plugin writes nothing of its own: the backend keeps a cost ledger with no text in it (see
- * Docs/asterisk-notes.md). Colours and type come from the app's theme tokens only.
+ * plugin stores nothing of its own: the backend keeps a cost ledger with no text in it and the
+ * pending notes (see Docs/asterisk-notes.md). Colours and type come from the app's theme tokens only.
  *
  * Asterisk runs only where it can: on an app whose plugin SDK lacks a name it uses it registers
  * nothing and asks the backend (POST /status) whether to show the one "update Hermes" notice; on a
@@ -57,12 +60,19 @@ const en = {
       user: 'decided by you'
     },
     open: 'Open',
+    askInChat: 'Ask in chat',
+    askText: (headline, text) => `Asterisk: ${headline} — ${text}`,
+    askFailed: "Could not put the note into this chat's input. Click into the input and try again.",
     knew: 'Already knew',
     gotIt: 'Got it',
+    collapse: 'Collapse',
+    expand: 'Expand',
     dotLabel: 'Worth knowing: a note waiting',
     failed: detail => `Could not check a reply: ${detail}`,
     noHeadline: 'the answer has no headline',
-    feedbackFailed: detail => `Could not record "Already knew": ${detail}`,
+    feedbackFailed: (label, detail) => `Could not record "${label}": ${detail}`,
+    restoreFailed: detail => `Could not restore earlier notes: ${detail}`,
+    noNotes: 'the answer has no notes list',
     pet: 'Worth knowing: a note above the input',
     updateHermes: 'Asterisk needs Hermes v0.21.6 or later and stays off until then. Update Hermes, then reopen the app.',
     oldInstall: 'The old "you-should-know" plugin is still installed, so Asterisk stays off and no reply is checked twice. Uninstall it in Capabilities → Plugins, then reopen the app.',
@@ -134,7 +144,7 @@ export function desktopReady(api = sdk) {
   return api.COMPOSER_AREAS?.top === 'composer.top' && api.SESSION_ROW_AREAS?.trailing === 'sessionRow.trailing'
     && [api.atom, api.useValue, api.usePluginI18n].every(f => typeof f === 'function')
     && Boolean(h?.state?.focusedSessionId && h.state.focusedStoredSessionId)
-    && typeof h.notify === 'function' && typeof h.openSession === 'function'
+    && typeof h.notify === 'function' && typeof h.openSession === 'function' && typeof h.composer?.insertText === 'function'
 }
 
 /** The one "update Hermes" notice, when the backend says this is the first time to show it. */
@@ -159,7 +169,10 @@ async function standDown(ctx) {
 export function createWatcher(ctx, hostApi = host) {
   const seen = new Map() // runtime session id -> stored session id, for chats the user opened here
   const checked = new Map() // reply key -> true, checked or being checked
-  const notes = atom([]) // the pending notes, in arrival order; memory only
+  const notes = atom([]) // the pending notes, in arrival order; restored from the backend once per start
+  const folded = atom(false)
+  const asking = new Set()
+  const gone = new Set()
   const capture = () => {
     const runtimeId = hostApi.state.focusedSessionId.get()
     if (runtimeId) remember(seen, runtimeId, hostApi.state.focusedStoredSessionId.get() || null, SEEN_MAX)
@@ -210,23 +223,47 @@ export function createWatcher(ctx, hostApi = host) {
     }
     if (!note) return
     notes.set([...notes.get(), note])
+    folded.set(false)
     if (ctx.pet?.visible?.get?.()) ctx.pet.say(t('asterisk.pet'), { id: ID, tone: 'info' })
   }
 
-  /** "Got it": the note goes, nothing is recorded. */
+  /** The note leaves the strip, nothing else. */
   const dismiss = id => notes.set(notes.get().filter(n => n.id !== id))
 
-  /** "Already knew": the note goes and the backend records it against its check (no text). */
-  async function knew(note) {
+  /** A button removes the note and the backend records it against its check, with the signal (no text). */
+  async function leave(note, signal, label) {
+    gone.add(note.checkAt)
     dismiss(note.id)
     try {
-      await ctx.rest('/feedback', { method: 'POST', body: { check_at: note.checkAt } })
+      await ctx.rest('/dismiss', { method: 'POST', body: { check_at: note.checkAt, signal } })
     } catch (err) {
       const detail = String(err?.message || err)
       console.warn(`[${ID}] feedback failed`, err)
-      hostApi.notify({ id: `${ID}-feedback-error`, kind: 'error', title: t('asterisk.title'), message: t('asterisk.feedbackFailed', detail) })
+      hostApi.notify({ id: `${ID}-feedback-error`, kind: 'error', title: t('asterisk.title'), message: t('asterisk.feedbackFailed', label, detail) })
     }
   }
+  const gotIt = note => leave(note, 'read', t('asterisk.gotIt'))
+  const knew = note => leave(note, 'already_knew', t('asterisk.knew'))
+
+  async function ask(note) {
+    if (asking.has(note.id)) return
+    asking.add(note.id)
+    let done = false
+    try {
+      done = await hostApi.composer.insertText(note.storedId, t('asterisk.askText', note.headline, note.text), { mode: 'block' })
+    } catch (err) {
+      console.warn(`[${ID}] insert failed`, err)
+    } finally {
+      asking.delete(note.id)
+    }
+    if (done !== true) {
+      hostApi.notify({ id: `${ID}-ask-failed`, kind: 'warning', title: t('asterisk.title'), message: t('asterisk.askFailed') })
+      return
+    }
+    await leave(note, 'asked', t('asterisk.askInChat'))
+  }
+
+  const toggleFold = () => folded.set(!folded.get())
 
   /** Asks the backend once whether to run; a failed or malformed answer changes nothing and shows nothing. */
   async function status() {
@@ -245,16 +282,50 @@ export function createWatcher(ctx, hostApi = host) {
     }
   }
 
-  return { capture, noteFocus, onComplete, dismiss, knew, status, notes, seen, checked }
+  async function restore() {
+    if (off) return
+    let entries
+    try {
+      const answer = await ctx.rest('/notes', { method: 'POST', body: {} })
+      if (!Array.isArray(answer?.notes)) throw new Error(t('asterisk.noNotes'))
+      entries = answer.notes
+    } catch (err) {
+      const detail = String(err?.message || err)
+      console.warn(`[${ID}] restore failed`, err)
+      hostApi.notify({ id: `${ID}-restore-error`, kind: 'error', title: t('asterisk.title'), message: t('asterisk.restoreFailed', detail) })
+      return
+    }
+    const back = []
+    for (const entry of [...entries].sort((a, b) => a?.at - b?.at)) {
+      try {
+        const note = noteFor(entry, { key: String(entry?.at), storedId: entry?.session_id })
+        if (note && !gone.has(note.checkAt)) back.push(note)
+      } catch (err) {
+        console.warn(`[${ID}] a stored note was skipped`, err)
+      }
+    }
+    const backAt = new Set(back.map(n => n.checkAt))
+    notes.set([...back, ...notes.get().filter(n => !backAt.has(n.checkAt))])
+  }
+
+  return { capture, noteFocus, onComplete, dismiss, gotIt, knew, ask, toggleFold, status, restore, notes, folded, seen, checked }
 }
 
-// Typography, hairlines and the stroke only: no box, no fill, no icon. Every colour is an app theme
+// Typography, hairlines, the stroke and one chevron: no box, no fill. Every colour is an app theme
 // token, so the strip follows the theme and light/dark. Animation runs under data-motion="full" only.
 const CSS = `
 .asterisk-strip{min-width:0;max-height:360px;overflow-y:auto;padding:12px 14px 4px;font-family:var(--font-sans);border-bottom:1px solid var(--ui-stroke-quaternary)}
+.asterisk-strip[data-folded="true"]{padding-bottom:12px}
+.asterisk-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
 .asterisk-label{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;line-height:1.4}
 .asterisk-label-name{color:var(--ui-accent);font-weight:600}
+.asterisk-h-label{position:relative;display:inline-block}
 .asterisk-label-count{color:var(--ui-text-tertiary)}
+.asterisk-fold{display:inline-flex;align-items:center;justify-content:center;flex:none;padding:2px;border:0;border-radius:4px;background:transparent;cursor:pointer;color:var(--ui-text-tertiary)}
+.asterisk-fold:hover{color:var(--ui-text-primary)}
+.asterisk-fold:focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}
+.asterisk-fold[aria-expanded="false"] svg{transform:rotate(180deg)}
+[data-motion="full"] .asterisk-fold svg{transition:transform .2s ease}
 .asterisk-list{list-style:none;margin:0;padding:0}
 .asterisk-entry{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:10px;align-items:start;padding:10px 0 12px;border-bottom:1px solid var(--ui-stroke-quaternary)}
 .asterisk-entry:last-child{border-bottom:0}
@@ -312,8 +383,10 @@ function Entry({ note, index, numbered, focused, motion, t, watcher }) {
           className: 'asterisk-actions',
           children: [
             jsx(Button, { onClick: () => void watcher.knew(note), children: t('asterisk.knew') }, 'knew'),
-            here ? null : jsx(Button, { onClick: open, children: t('asterisk.open') }, 'open'),
-            jsx(Button, { className: 'asterisk-gotit', onClick: () => watcher.dismiss(note.id), children: t('asterisk.gotIt') }, 'gotit')
+            here
+              ? jsx(Button, { onClick: () => void watcher.ask(note), children: t('asterisk.askInChat') }, 'ask')
+              : jsx(Button, { onClick: open, children: t('asterisk.open') }, 'open'),
+            jsx(Button, { className: 'asterisk-gotit', onClick: () => void watcher.gotIt(note), children: t('asterisk.gotIt') }, 'gotit')
           ]
         }, 'actions')
       ]
@@ -340,16 +413,28 @@ function Entry({ note, index, numbered, focused, motion, t, watcher }) {
   })
 }
 
+function Chevron() {
+  return jsx('svg', {
+    'aria-hidden': 'true',
+    viewBox: '0 0 12 12',
+    width: 12,
+    height: 12,
+    children: jsx('path', { d: 'M3 7.5 L6 4.5 L9 7.5', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' })
+  })
+}
+
 /** The `composer.top` contribution: the "Worth knowing" strip, or nothing when no note is pending. */
 export function createStrip(watcher) {
   return function AsteriskStrip() {
     const list = useValue(watcher.notes)
+    const isFolded = useValue(watcher.folded)
     const focused = useValue(host.state.focusedStoredSessionId)
     const t = usePluginI18n(ID)
     if (!list.length) return null
     const motion = reducedMotion() ? 'reduce' : 'full'
     const numbered = list.length > 1
     const label = t('asterisk.label')
+    const foldLabel = isFolded ? t('asterisk.expand') : t('asterisk.collapse')
     return jsxs(Fragment, {
       children: [
         jsx('style', { children: CSS }),
@@ -360,20 +445,40 @@ export function createStrip(watcher) {
           'aria-label': label,
           'aria-live': 'polite',
           'data-motion': motion,
+          'data-folded': isFolded ? 'true' : 'false',
           'data-count': String(list.length),
           children: [
             jsxs('div', {
-              className: 'asterisk-label',
-              'data-asterisk': 'label',
+              className: 'asterisk-head',
               children: [
-                jsx('span', { className: 'asterisk-label-name', children: label }),
-                numbered ? jsx('span', { className: 'asterisk-label-count', children: ` · ${t('asterisk.count', list.length)}` }) : null
+                jsxs('div', {
+                  className: 'asterisk-label',
+                  'data-asterisk': 'label',
+                  children: [
+                    isFolded
+                      ? jsxs('span', { className: 'asterisk-label-name asterisk-h-label', children: [label, jsx(Stroke, {})] })
+                      : jsx('span', { className: 'asterisk-label-name', children: label }),
+                    isFolded || numbered ? jsx('span', { className: 'asterisk-label-count', children: ` · ${t('asterisk.count', list.length)}` }) : null
+                  ]
+                }),
+                jsx('button', {
+                  type: 'button',
+                  className: 'asterisk-fold',
+                  'data-asterisk': 'fold',
+                  'aria-expanded': isFolded ? 'false' : 'true',
+                  'aria-label': foldLabel,
+                  title: foldLabel,
+                  onClick: watcher.toggleFold,
+                  children: jsx(Chevron, {})
+                })
               ]
             }),
-            jsx('ol', {
-              className: 'asterisk-list',
-              children: list.map((note, index) => jsx(Entry, { note, index, numbered, focused, motion, t, watcher }, note.id))
-            })
+            isFolded
+              ? null
+              : jsx('ol', {
+                  className: 'asterisk-list',
+                  children: list.map((note, index) => jsx(Entry, { note, index, numbered, focused, motion, t, watcher }, note.id))
+                })
           ]
         })
       ]
@@ -408,6 +513,6 @@ export default {
     ctx.onEvent('message.complete', event => void watcher.onComplete(event))
     ctx.register({ id: 'headline', area: COMPOSER_AREAS.top, render: createStrip(watcher) })
     ctx.register({ id: 'dot', area: SESSION_ROW_AREAS.trailing, data: { render: createDot(watcher) } })
-    void watcher.status()
+    void watcher.status().then(() => watcher.restore())
   }
 }
