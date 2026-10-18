@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.3.0 (2026-10-18)
+
+- A fourth button, "Not right", on every note that shows its sentence (the chat you are in and
+  another chat), next to "Already knew": for a note that is wrong or beside the point. One click, no
+  reason asked: the note leaves the strip, its copy in `plugin-data/asterisk/notes.json` is removed,
+  and the ledger gets one line `{at, feedback: "wrong", check_at}` without any text. "Already knew"
+  now means only "right, but not news".
+- The four ways a note leaves: `asked` (Ask in chat), `read` (Got it), `already_knew` (Already knew)
+  and `wrong` (Not right). `POST /dismiss` accepts `wrong`; ledger lines written before stay as they
+  are.
+- No change to what is checked, the prompt, the trigger, how the model is chosen or what is stored.
+  The desktop half and the backend must come from the same release: a 4.2.0 backend refuses
+  "Not right" (one "Could not record" error) and the note comes back at the next start.
+
 ## 4.2.0 (2026-10-18)
 
 - Note text is now kept on disk until you dismiss the note, as a development-phase measure: it lets

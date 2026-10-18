@@ -11,8 +11,16 @@
  * inlined), with the preset's seeds set on <html> the way the app's applyTheme maps them (palette
  * read at run time from apps/shared/src/theme-presets.ts), and class="dark" + color-scheme for dark.
  * It shows, in order: "One note, focused chat (Ask in chat)", "One note, another chat", "Three notes,
- * one in the focused chat", "Three notes, collapsed", "One note, collapsed" and "Three notes, reduced
- * motion", beside a sidebar of five rows with dots on three.
+ * one in the focused chat", "Three notes, collapsed", "One note, collapsed", "Three notes, reduced
+ * motion", "One note, another chat, narrow (260px)" and "Three notes, one in the focused chat, narrow
+ * (260px)" (a 260px composer, the core's COMPOSER_FOLD_VOICE_PX), beside a sidebar of five rows with
+ * dots on three. One note's sentence carries a long unbreakable path.
+ *
+ * Fit report: an inline script sets <body data-fit> to "ok", or to the list of failures. For every
+ * actions row: no horizontal overflow, every button ends inside the row (0.5px tolerance), all its
+ * buttons share one height (no label wraps inside a button) and, outside the narrow sections, one
+ * line; for every entry: no horizontal overflow. At 260px the row may wrap onto more lines.
+ * Read it in a browser: document.body.dataset.fit.
  *
  * Core from HERMES_CORE or <HERMES_HOME>/hermes-agent. A missing core, a missing dist CSS (build the
  * desktop app first) or an unparseable palette exits 1 naming the path.
@@ -148,7 +156,7 @@ const NOTES = [
   { id: 'n2', storedId: 'st-2', title: null, headline: 'Old backups deleted for good',
     text: 'You asked to delete the old backups; the reply calls it a cleanup, but they cannot be restored.', by: 'user', cost: '<$0.01', checkAt: 2 },
   { id: 'n3', storedId: 'st-3', title: 'Release notes for the spring update', headline: 'Release tag pushed before the tests finished',
-    text: 'The assistant pushed the release tag while the test run was still going.', by: 'assistant', cost: '~$0.06', checkAt: 3 }
+    text: 'The assistant pushed the release tag while the test run was still going; its log is in build/release_candidate_2026_10_18_spring_update_full_test_run_output.log.', by: 'assistant', cost: '~$0.06', checkAt: 3 }
 ]
 const watcherWith = (list, { folded = false } = {}) => {
   const w = mod.createWatcher(ctx, stub.host)
@@ -169,7 +177,28 @@ const sidebar = () => {
   return rows.map(([id, name]) => `<div class="pv-row"><span class="pv-name">${name}</span>${renderToStaticMarkup(createElement(DotFor, { sessionId: id }))}</div>`).join('')
 }
 
-const section = (title, body) => `<section class="pv-case"><h2 class="pv-h">${title}</h2><div class="pv-composer">${body}<div class="pv-input">Ask anything…</div></div></section>`
+const section = (title, body, narrow = false) => `<section class="pv-case${narrow ? ' pv-narrow' : ''}"><h2 class="pv-h">${title}</h2><div class="pv-composer">${body}<div class="pv-input">Ask anything…</div></div></section>`
+// The fit report (see the header): what the reviewer reads as document.body.dataset.fit.
+const FIT = `(() => {
+  const fails = []
+  for (const sec of document.querySelectorAll('.pv-case')) {
+    const name = sec.querySelector('.pv-h').textContent
+    const narrow = sec.classList.contains('pv-narrow')
+    sec.querySelectorAll('.asterisk-actions').forEach((row, i) => {
+      const where = name + ' / actions ' + (i + 1)
+      const right = row.getBoundingClientRect().right
+      const btns = [...row.querySelectorAll('.asterisk-btn')]
+      if (row.scrollWidth > row.clientWidth) fails.push(where + ': the row overflows')
+      if (btns.some(b => b.getBoundingClientRect().right > right + 0.5)) fails.push(where + ': a button ends past the row')
+      if (new Set(btns.map(b => b.offsetHeight)).size > 1) fails.push(where + ': a label wraps inside a button')
+      if (!narrow && new Set(btns.map(b => b.offsetTop)).size > 1) fails.push(where + ': the buttons take more than one line')
+    })
+    sec.querySelectorAll('.asterisk-entry').forEach((e, i) => {
+      if (e.scrollWidth > e.clientWidth) fails.push(name + ' / entry ' + (i + 1) + ': the entry overflows')
+    })
+  }
+  document.body.dataset.fit = fails.length ? fails.join('; ') : 'ok'
+})()`
 for (const name of ['nous', 'everforest']) {
   const { light, dark } = palette(name)
   for (const [mode, c] of [['light', light], ['dark', dark]]) {
@@ -189,6 +218,7 @@ body{margin:0;padding:24px;background:var(--ui-bg, var(--theme-background-seed))
 .pv-side{display:flex;flex-direction:column;gap:2px}
 .pv-row{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;font-size:13px}
 .pv-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pv-narrow .pv-composer{width:260px}
 </style></head>
 <body><div class="pv-grid">
 <aside><h2 class="pv-h">Sidebar (dots on three chats)</h2><div class="pv-side">${sidebar()}</div></aside>
@@ -199,7 +229,9 @@ ${section('Three notes, one in the focused chat', strip(NOTES))}
 ${section('Three notes, collapsed', strip(NOTES, { folded: true }))}
 ${section('One note, collapsed', strip([NOTES[0]], { folded: true }))}
 ${section('Three notes, reduced motion', reduced(NOTES))}
-</main></div></body></html>
+${section('One note, another chat, narrow (260px)', strip([NOTES[2]]), true)}
+${section('Three notes, one in the focused chat, narrow (260px)', strip(NOTES), true)}
+</main></div><script>${FIT}</script></body></html>
 `
     const file = path.join(OUT, `${name}-${mode}.html`)
     writeFileSync(file, html)

@@ -99,9 +99,9 @@ Hermes' own extension points.
    with the check's `at`.
 7. One point becomes one note in the "Worth knowing" strip at the top of the composer
    (`composer.top`). A single note shows its headline (serif, underlined by a stroke in the theme's
-   accent), its sentence, the cost and who decided, and "Already knew" / "Ask in chat" / "Got it"
-   for the focused chat's note, or "Already knew" / "Open" / "Got it" when it belongs to another
-   chat. Several notes are a numbered list in arrival order: the focused chat's note is expanded,
+   accent), its sentence, the cost and who decided, and "Already knew" / "Not right" / "Ask in chat"
+   / "Got it" for the focused chat's note, or "Already knew" / "Not right" / "Open" / "Got it" when
+   it belongs to another chat. Several notes are a numbered list in arrival order: the focused chat's note is expanded,
    every other one is one line with its chat's title ("Untitled chat" without one), the cost and
    "Open", which opens that chat and keeps the note.
    "Ask in chat" (focused chat's note only) puts the note into that chat's input through
@@ -113,9 +113,9 @@ Hermes' own extension points.
    click into the input and try again. A second click while an insert is pending does nothing.
    A chevron in the strip's header folds it to one line ("Worth knowing · 3 notes", the label
    underlined by the accent stroke); the notes and the sidebar dots stay, and a new note unfolds it.
-   The fold is not stored. A note stays until "Ask in chat", "Got it" or "Already knew" removes it;
-   each removal posts `POST /dismiss {check_at, signal}` with the signal `asked`, `read` or
-   `already_knew`. The sidebar row of a chat with a pending note carries a dot in the accent
+   The fold is not stored. A note stays until "Ask in chat", "Got it", "Already knew" or "Not right"
+   removes it, in one click; each removal posts `POST /dismiss {check_at, signal}` with the signal
+   `asked`, `read`, `already_knew` or `wrong`. The sidebar row of a chat with a pending note carries a dot in the accent
    (`sessionRow.trailing`). Pending notes survive an app restart during the development phase (see
    "Notes on disk (development phase)"). Colours come from the app's theme tokens
    only, so the strip follows the theme in light and dark; under reduced motion the stroke is shown
@@ -161,15 +161,23 @@ chat's title. A skipped turn writes `{at, skipped}` with its reason (a check lin
 3,000 marks a tool-triggered check). A failed call writes no line; an unreadable answer writes one with `"points": null, "error":
 "unreadable"`; a turn that could not be read writes `{at, provider, model, "error":
 "turn_unreadable"}` with the chosen route (no call was made); `no model chosen` still writes nothing. Each
-dismissal writes `{at, "feedback": <signal>, check_at}`, where the signal is `asked` ("Ask in
-chat"), `read` ("Got it") or `already_knew` ("Already knew") and `check_at` is the `at` of the check
-it answers (before 4.2.0 only `already_knew` was written; "Got it" recorded nothing). Lines written
-by 1.0.0 stay as they are.
+dismissal writes `{at, "feedback": <signal>, check_at}`, where `check_at` is the `at` of the check
+it answers and the signal says how the note left:
+
+| Button | Signal | Means |
+|---|---|---|
+| Ask in chat | `asked` | useful, taken into the chat |
+| Got it | `read` | read |
+| Already knew | `already_knew` | right, but not news |
+| Not right | `wrong` | wrong or irrelevant (a false alarm) |
+
+Before 4.3.0 there was no `wrong`; earlier lines stay as they are (before 4.2.0 only `already_knew`
+was written; "Got it" recorded nothing). Lines written by 1.0.0 stay as they are.
 
 **Review after week two:** how many checks, the total cost, the share of checks with a point
 (expected to be a minority — most turns have nothing to flag), how many were `unreadable` or
-`turn_unreadable`, how each point left (`asked`, `read` and `already_knew` lines, each counted
-against checks with a point), and whether the points were worth reading. For a side-by-side judgement, label an
+`turn_unreadable`, how each point left (`asked`, `read`, `already_knew` and `wrong` lines, each
+counted against checks with a point; `wrong` counts the false alarms), and whether the points were worth reading. For a side-by-side judgement, label an
 offline evaluation run (README → "Offline evaluation"): tick "useful" or "noise" per point. If the
 points are mostly noise, turn the plugin off — it is opt-in value, not a safety layer.
 
@@ -181,7 +189,7 @@ cost and who decided, plus the chat's id and the check's `at` — in
 `<HERMES_HOME>/plugin-data/asterisk/notes.json` (the host's plugin storage,
 `plugins.plugin_storage.plugin_data_dir`, so it follows the active profile), apart from the ledger,
 which still holds no text. It keeps at most 50 notes; past that the oldest is dropped. "Ask in
-chat", "Got it" and "Already knew" each remove the note from the file (`POST /dismiss`). At each app
+chat", "Got it", "Already knew" and "Not right" each remove the note from the file (`POST /dismiss`). At each app
 start the desktop half asks for the pending notes (`POST /notes`, after `/status`, only when
 Asterisk is on); a note whose chat no longer exists in the store is dropped then. When the store
 cannot be opened nothing is dropped. Restored notes do not unfold the strip or make the pet speak.
