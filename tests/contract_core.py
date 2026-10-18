@@ -46,6 +46,15 @@ Seams:
                answered, a fallback included (what the ledger and the strip name)
   picker       Settings -> Models -> Auxiliary models lists a plugin task by its display_name, with
                "Set to main" and the unpinned "auto · use main model" (the README's and notice's steps)
+  sideeffect   tool_may_have_side_effect(tool_name) is true for every name outside NO_EFFECT_TOOL_NAMES
+               (the trigger: which tools only read is the core's list, never the plugin's)
+  userview     user_originated_turn_view(message) is the core's human-authored projection of a user
+               row (None for other roles and for display_kind rows other than steer), and read rows
+               carry _compressed_summary (which user rows are the user's own words)
+  unproven     the states the backend skips are normal core states: a missing receipt id is unproven,
+               the receipt is None for a preflight transcript or a non-user cursor, compaction
+               re-anchors or moves the cursor, and in-place compaction archives the active rows the
+               default read returns
 """
 from __future__ import annotations
 
@@ -87,6 +96,10 @@ FILES = {
     "plugins": "hermes_cli/plugins.py",
     "models_router": "hermes_cli/web_routers/models.py",
     "aux_rows": "apps/desktop/src/app/settings/aux-task-rows.tsx",
+    "classify": "agent/tool_result_classification.py",
+    "compressor": "agent/context_compressor.py",
+    "compaction": "agent/turn_context_compaction.py",
+    "compression": "agent/conversation_compression.py",
 }
 
 
@@ -182,6 +195,22 @@ SEAMS: dict[str, list[tuple[str, str]]] = {
                ("en", lit("auxiliaryTitle: 'Auxiliary models',")),
                ("en", lit("setToMain: 'Set to main',")),
                ("en", lit("autoUseMain: 'auto · use main model',"))],
+    "sideeffect": [("classify", r"^def tool_may_have_side_effect\(tool_name: str\) -> bool:$"),
+                   ("classify", r"^    return tool_name not in NO_EFFECT_TOOL_NAMES$"),
+                   ("classify", r"^NO_EFFECT_TOOL_NAMES = frozenset\(\{$")],
+    "userview": [("compressor", r"^def user_originated_turn_view\(message: Any\) -> Optional\[[dD]ict\[str, Any\]\]:$"),
+                 ("compressor", r'^    if not isinstance\(message, dict\) or message\.get\("role"\) != "user":$'),
+                 ("compressor", lit('elif message.get("display_kind") and message.get("display_kind") != STEER_DISPLAY_KIND:')),
+                 ("messages", lit('msg["_compressed_summary"] = True'))],
+    "unproven": [("events", lit("unproven, never negative acknowledgements")),
+                 ("turn", lit("return None  # preflight returned the old transcript, not a new turn")),
+                 ("turn", lit('or messages[start].get("role") != "user"):')),
+                 ("turn", lit('receipt["user_row_id"] = user_row_id')),
+                 ("turn", lit('and last.get("content") == raw and (final_id := committed_id(last)) is not None):')),
+                 ("compaction", lit("agent._persist_user_message_idx = idx")),
+                 ("compression", lit("agent._persist_user_message_idx = len(messages)")),
+                 ("messages", lit('_ARCHIVE_ACTIVE_SQL = "UPDATE messages SET active = 0, compacted = 1 WHERE session_id = ? AND active = 1"')),
+                 ("messages", lit('else " AND active = 1")'))],
 }
 
 

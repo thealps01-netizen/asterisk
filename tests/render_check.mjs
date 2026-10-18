@@ -11,15 +11,17 @@
  *   1. Registration: exactly two contributions, `composer.top` (render) and `sessionRow.trailing`
  *      (data.render); no pane, no page, no nav row, revealPane never called; the English bundle;
  *      one message.complete listener; focus listeners are retired on dispose.
- *   2. Which replies: status complete, not a reused reply, a string of at least 3000 characters,
- *      in a chat the user has opened in this app. A subagent mirror (no status), an error, a short
- *      reply or a chat never opened is never sent.
- *   3. Once per reply: the same text again is not checked twice; a reply differing only at its end
- *      is a different reply (the key covers the whole text).
+ *   2. Which replies: status complete, not a reused reply, a string of any length, in a chat the
+ *      user has opened in this app; the backend alone decides whether the turn is checked. A
+ *      subagent mirror (no status), an error, an interrupted or a reused frame, or a chat never
+ *      opened is never sent; the desktop half has no length floor (mod.MIN_CHARS is undefined).
+ *   3. Once per reply: the same frame again is not checked twice; a reply differing only at its end
+ *      is a different reply (the key covers the whole text); two turns with the same short text and
+ *      different final row ids are both posted.
  *   4. The request: POST /check with exactly { session_id, turn } — the stored id of the reply's OWN
  *      chat (even when another chat is in focus) and the frame's persisted_turn receipt as is; never
- *      the reply's text. A frame without a receipt still posts, with turn: null (the backend's
- *      refusal becomes the error notice, never a silent skip).
+ *      the reply's text. A frame without a receipt still posts, with turn: null; the backend's
+ *      skip answer { points: [], skipped } shows no note and no toast (the user's live case).
  *   5. The strip: nothing when no note is pending; a point is a note, never a toast. One note: the
  *      label "Worth knowing", no number, headline, sentence, meta "<model> · <cost> · decided by ...",
  *      "Already knew" and "Got it" ("Open" only for another chat). Several notes: "Worth knowing ·
@@ -232,12 +234,17 @@ check(mod.eligible({ status: 'complete', text: long('x') }), 'a complete long re
 check(!mod.eligible({ text: long('x') }), 'a subagent mirror (no status) is not')
 check(!mod.eligible({ status: 'error', text: long('x') }) && !mod.eligible({ status: 'interrupted', text: long('x') }), 'an error or interrupted turn is not')
 check(!mod.eligible({ status: 'complete', text: long('x'), response_reused: true }), 'a reply this turn already delivered is not')
-check(!mod.eligible({ status: 'complete', text: 'A'.repeat(2999) }) && mod.eligible({ status: 'complete', text: 'A'.repeat(3000) }), 'the floor is 3000 characters, inclusive')
+check(mod.eligible({ status: 'complete', text: 'Done.' }) && mod.eligible({ status: 'complete', text: 'A'.repeat(2999) }) && mod.MIN_CHARS === undefined,
+  'a complete short reply is eligible: the desktop half has no length floor (mod.MIN_CHARS is undefined)')
 check(!mod.eligible({ status: 'complete', text: { parts: [long('x')] } }), 'a non-string text is not')
 await emit('rt-never', { status: 'complete', text: long('never') })
 check(rest.length === 0, 'a reply in a chat never opened here is not sent')
 await emit('rt-1', { text: long('mirror') })
 check(rest.length === 0, 'a mirror frame is not sent')
+await emit('rt-1', { status: 'error', text: 'Done.', persisted_turn: receipt(5) })
+await emit('rt-1', { status: 'interrupted', text: 'Done.', persisted_turn: receipt(5) })
+await emit('rt-1', { status: 'complete', text: 'Done.', response_reused: true, persisted_turn: receipt(5) })
+check(rest.length === 0, 'an error, an interrupted or a reused frame is not sent')
 
 // 3/4/5. one note, in the focused chat
 const H1 = 'SQLite chosen over Postgres'
@@ -382,7 +389,7 @@ restFails = null
 reply = { points: [{ kind: 'cost', by: 'user', text: 'No headline here.' }], cost_usd: 0.02, cost_status: 'estimated', model: 'fake-model-x', at: 4000, title: 'X' }
 await emit('rt-3', frame('four', 40))
 n = stub.calls.notify.at(-1)
-check(stub.calls.notify.length === toasts + 1 && n?.id === 'asterisk-error' && n?.message === 'Could not check a long reply: the answer has no headline'
+check(stub.calls.notify.length === toasts + 1 && n?.id === 'asterisk-error' && n?.message === 'Could not check a reply: the answer has no headline'
   && strip.el.innerHTML === '', `a point without a headline is one error toast and no note (${n?.message})`)
 reply = { points: [], cost_usd: 0.02, cost_status: 'estimated', model: 'fake-model-x', at: 4001, title: null }
 await emit('rt-3', frame('five', 50))
@@ -390,16 +397,34 @@ check(strip.el.innerHTML === '' && stub.calls.notify.length === toasts + 1, 'not
 restFails = 'model call failed (APITimeoutError)'
 await emit('rt-3', frame('six', 60))
 n = stub.calls.notify.at(-1)
-check(n?.kind === 'error' && n?.id === 'asterisk-error' && n?.message === 'Could not check a long reply: model call failed (APITimeoutError)',
+check(n?.kind === 'error' && n?.id === 'asterisk-error' && n?.message === 'Could not check a reply: model call failed (APITimeoutError)',
   `a failed check is one error toast that names the error (${n?.message})`)
-// 4. a frame without a receipt (a core before persisted_turn) still posts; the refusal is the error toast
+// 2/3/4. short replies: posted with or without a receipt; same text, different final row ids, posted twice;
+// the user's live case: no receipt, the backend skips (no_receipt) -> no note, no toast
+restFails = null
+reply = { points: [], skipped: 'no_receipt' }
+const toastsShort = stub.calls.notify.length
+let before = rest.length
+await emit('rt-3', { status: 'complete', text: 'Done.', persisted_turn: receipt(70) })
+check(rest.length === before + 1 && same(rest.at(-1)?.[1]?.body, { session_id: 'st-3', turn: receipt(70) }),
+  `a complete short reply with a receipt is posted (${JSON.stringify(rest.at(-1)?.[1]?.body)})`)
+await emit('rt-3', { status: 'complete', text: 'Done.', persisted_turn: receipt(80) })
+await emit('rt-3', { status: 'complete', text: 'Done.', persisted_turn: receipt(80) })
+check(rest.length === before + 2 && same(rest.at(-1)?.[1]?.body?.turn, receipt(80)),
+  `two frames with the same short text and different final row ids are both posted; the same frame twice once (${rest.length - before})`)
+before = rest.length
+await emit('rt-3', { status: 'complete', text: 'Short, no receipt.' })
+const body3 = rest.at(-1)?.[1]?.body
+check(rest.length === before + 1 && body3?.session_id === 'st-3' && 'turn' in body3 && body3.turn === null,
+  `a complete short reply without a receipt is posted with turn: null (${JSON.stringify(body3)})`)
+check(strip.el.innerHTML === '' && stub.calls.notify.length === toastsShort,
+  `a skipped: 'no_receipt' answer shows no note and no toast (${stub.calls.notify.length - toastsShort} toasts)`)
+// 4. a malformed receipt is still the error toast
 restFails = 'turn ids missing or malformed'
 await emit('rt-3', { status: 'complete', text: long('no receipt') })
 console.warn = warn
-const body3 = rest.at(-1)?.[1]?.body
-check(body3?.session_id === 'st-3' && 'turn' in body3 && body3.turn === null, `a frame without a receipt still posts, with turn: null (${JSON.stringify(body3)})`)
 n = stub.calls.notify.at(-1)
-check(n?.kind === 'error' && n?.message === 'Could not check a long reply: turn ids missing or malformed', `the refusal is the error toast, never a silent skip (${n?.message})`)
+check(n?.kind === 'error' && n?.message === 'Could not check a reply: turn ids missing or malformed', `a refusal is still the error toast (${n?.message})`)
 restFails = null
 // 14. no model chosen for Asterisk: one warning per app start, never the error toast, later replies still posted
 const NO_MODEL = 'Asterisk has no model chosen, so it checks no reply. It does not use your main model on its own. Choose one in Settings → Models → Auxiliary models → Asterisk (Change, or Set to main).'
