@@ -1,5 +1,21 @@
 # Changelog
 
+## 4.3.0 (2026-10-18)
+
+- Two more buttons, "Not sure" and "Not useful", on every note that shows its sentence (the chat you
+  are in and another chat), next to "Already knew": "Not sure" for a note you cannot tell is right,
+  "Not useful" for a note that was not worth showing (wrong, beside the point or trivial). One click,
+  no reason asked: the note leaves the strip, its copy in `plugin-data/asterisk/notes.json` is
+  removed, and the ledger gets one line `{at, feedback: "unsure" | "not_useful", check_at}` without
+  any text. "Already knew" now means only "right, but not news".
+- The five ways a note leaves: `asked` (Ask in chat), `read` (Got it), `already_knew` (Already knew),
+  `unsure` (Not sure) and `not_useful` (Not useful). `POST /dismiss` accepts `unsure` and
+  `not_useful`; ledger lines written before stay as they are.
+- No change to what is checked, the prompt, the trigger, how the model is chosen or what is stored.
+  The desktop half and the backend must come from the same release: a 4.2.0 backend refuses
+  "Not sure" and "Not useful" (one "Could not record" error) and the note comes back at the next
+  start.
+
 ## 4.2.0 (2026-10-18)
 
 - Note text is now kept on disk until you dismiss the note, as a development-phase measure: it lets

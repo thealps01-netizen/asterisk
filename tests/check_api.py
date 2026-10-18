@@ -70,7 +70,8 @@ Locks:
      is a point; a title that cannot be read, or a blank one, is null and the point stays. A skip's
      response is exactly {points: [], skipped}.
  14. POST /dismiss {check_at, signal: already_knew}: a finite positive number (not a bool) appends
-     exactly {at, feedback: "already_knew", check_at}; any other check_at is a 400 with no line.
+     exactly {at, feedback: "already_knew", check_at}; any other check_at is a 400 with no line; the
+     same holds for signal: unsure and not_useful (22b).
  15. The name and the upgrade from 2.x (each part in a fresh profile home):
      (a) the auxiliary task is `asterisk` and the ledger is state/asterisk/ledger.jsonl;
      (b) with plugins/you-should-know/plugin.yaml present, /check is a 409 "old you-should-know plugin
@@ -116,7 +117,7 @@ Locks:
          one entry {session_id, at, title, model, cost_usd, cost_status, points} with the full headline
          and text; plugin_api.py loaded a second time under another module name (same HERMES_HOME)
          answers /notes with that entry unchanged; a check with no point and a skip write no entry;
-     (b) /dismiss {check_at, signal} for asked, read and already_knew appends exactly
+     (b) /dismiss {check_at, signal} for asked, read, already_knew, unsure and not_useful appends
          {at, feedback: <signal>, check_at} and removes the entry from the file and from /notes; a bad
          check_at (8 cases) or signal ("knew", "", None, 1, missing) is a 400 with its message, no line,
          nothing removed; the router mounts POST /dismiss and POST /notes and no /feedback;
@@ -1168,7 +1169,7 @@ check(none["points"] == [] and skipped == {"points": [], "skipped": "no_receipt"
 
 # 22b. each signal removes the stored note and appends exactly {at, feedback: <signal>, check_at}
 Fake.answer = NOTE_POINT
-for i in range(4):
+for i in range(6):
     api.check("st-1", RECEIPT, 3001.0 + i)
 for i, signal in enumerate(api.SIGNALS):
     at = 3001.0 + i
@@ -1181,18 +1182,18 @@ for i, signal in enumerate(api.SIGNALS):
               and new[0]["check_at"] == at and isinstance(new[0]["at"], float) and gone_file and gone_notes)
     check(ok_one, f"22b. /dismiss {{check_at, signal: {signal}}} appends exactly {{at, feedback: {signal}, check_at}}; "
                   f"the note is gone from the file and from /notes ({new})")
-check(api.SIGNALS == ("asked", "read", "already_knew"), f"22b. the signals are asked, read, already_knew ({api.SIGNALS})")
+check(api.SIGNALS == ("asked", "read", "already_knew", "unsure", "not_useful"), f"22b. the signals are asked, read, already_knew, unsure, not_useful ({api.SIGNALS})")
 count, before = len(ledger_at(h5)), notes_path(h5).read_bytes()
 codes = [status_of(api.dismiss_route, {**b, "signal": "read"} if isinstance(b, dict) else b) for b in BAD_CHECK_AT]
 check(all(c == (400, "check_at must be a positive number") for c in codes) and len(ledger_at(h5)) == count
       and notes_path(h5).read_bytes() == before,
       f"22b. a bad check_at (8 cases) -> 400 'check_at must be a positive number', no ledger line, nothing removed ({codes})")
-bad_signals = [{"check_at": 3004.0, "signal": s} for s in ("knew", "", None, 1)] + [{"check_at": 3004.0}]
+bad_signals = [{"check_at": 3006.0, "signal": s} for s in ("knew", "", None, 1)] + [{"check_at": 3006.0}]
 codes = [status_of(api.dismiss_route, b) for b in bad_signals]
 both = status_of(api.dismiss_route, {"check_at": 0, "signal": "knew"})
-check(all(c == (400, "signal must be asked, read or already_knew") for c in codes) and both == (400, "check_at must be a positive number")
-      and len(ledger_at(h5)) == count and notes_path(h5).read_bytes() == before and any(e["at"] == 3004.0 for e in stored(h5)),
-      f"22b. a bad signal (\"knew\", \"\", None, 1, missing) -> 400 'signal must be asked, read or already_knew' after the "
+check(all(c == (400, "signal must be asked, read, already_knew, unsure or not_useful") for c in codes) and both == (400, "check_at must be a positive number")
+      and len(ledger_at(h5)) == count and notes_path(h5).read_bytes() == before and any(e["at"] == 3006.0 for e in stored(h5)),
+      f"22b. a bad signal (\"knew\", \"\", None, 1, missing) -> 400 'signal must be asked, read, already_knew, unsure or not_useful' after the "
       f"check_at check; no ledger line, nothing removed ({codes}, {both})")
 mounted = {(getattr(r, "path", ""), m) for r in api.router.routes for m in getattr(r, "methods", ())}
 check(("/dismiss", "POST") in mounted and ("/notes", "POST") in mounted and not any(p == "/feedback" for p, _ in mounted)

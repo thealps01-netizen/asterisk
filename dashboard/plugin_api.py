@@ -3,8 +3,8 @@
 Routes (mounted at /api/plugins/asterisk/):
   POST /check     {session_id, turn}  -> {points: [] | [{kind, by, headline, text}], cost_usd, cost_status,
                                           chars, at, title, model}
-  POST /dismiss   {check_at, signal}  -> {ok: true}   (the user dismissed that check's note: asked, read or
-                                                       already_knew)
+  POST /dismiss   {check_at, signal}  -> {ok: true}   (the user dismissed that check's note: asked, read,
+                                                       already_knew, unsure or not_useful)
   POST /notes     {}                  -> {notes: [...]}   (the pending notes, once per app start)
   POST /status    {desktop_ready}     -> {ready, update_notice, old_install}   (once per app start)
 
@@ -81,7 +81,7 @@ KINDS = ("tradeoff", "result", "assumption", "irreversible", "security", "cost",
 PRIORITY = (("irreversible", "security"), ("unanswered", "overclaim", "constraint"), ("result", "cost"),
             ("tradeoff", "assumption", "overreach"))
 BY = ("assistant", "user")
-SIGNALS = ("asked", "read", "already_knew")
+SIGNALS = ("asked", "read", "already_knew", "unsure", "not_useful")
 _PRIORITY_LINES = "\n".join(f"{n}. {', '.join(group)}" for n, group in enumerate(PRIORITY, 1))
 
 SYSTEM_PROMPT = f"""You review one turn of a conversation between a user and an AI assistant: the user's message, the
@@ -674,7 +674,7 @@ def dismiss(check_at, signal, now: float | None = None) -> dict:
     if not _positive(check_at):
         raise HTTPException(status_code=400, detail="check_at must be a positive number")
     if signal not in SIGNALS:
-        raise HTTPException(status_code=400, detail="signal must be asked, read or already_knew")
+        raise HTTPException(status_code=400, detail="signal must be asked, read, already_knew, unsure or not_useful")
     _record({"at": round(now if now is not None else time.time(), 3), "feedback": signal, "check_at": check_at})
     _drop_note(check_at)
     return {"ok": True}

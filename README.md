@@ -26,6 +26,22 @@ For the development phase, while the notes' usefulness is measured, the text of 
 restart. It is separate from the ledger, which holds no text, and it is left there on uninstall
 (delete it by hand). This will be turned off later.
 
+## Dismissing a note
+
+A note stays until you dismiss it with one of its buttons, in one click. Each one removes the note
+and records in the ledger, without any text, how it left:
+
+| Button | Signal | Means |
+|---|---|---|
+| Ask in chat | `asked` | useful, taken into the chat |
+| Got it | `read` | read |
+| Already knew | `already_knew` | right, but not news |
+| Not sure | `unsure` | cannot tell whether it is right |
+| Not useful | `not_useful` | not worth showing (wrong, beside the point or trivial) |
+
+"Ask in chat" is on a note of the chat you are in; a note of another chat has "Open" instead, which
+opens that chat and keeps the note.
+
 ## Layout
 
 | Path | What |

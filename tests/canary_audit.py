@@ -262,7 +262,7 @@ MUTATIONS = [
      "- result: a result the reply presents as done or correct that the turn's tool results put in doubt\n"),
     ("MAX_EARLIER_CHARS changes without the notes", API, "MAX_EARLIER_CHARS = 2000", "MAX_EARLIER_CHARS = 2400"),
     ("the eval keeps the old length rule", "eval/compare_checkers.py", "new.needs_check(", "(lambda rows: len(str(rows[-1].get('content') or '')) >= 3000)("),
-    # note actions (4.2.0): Ask in chat, fold, three signals, notes that survive a restart
+    # note actions (4.2.0): Ask in chat, fold, the dismissal signals, notes that survive a restart
     ("Ask in chat submits", JS, "hostApi.composer.insertText(note.storedId", "hostApi.composer.submit(note.storedId"),
     ("Ask in chat replaces the draft", JS, "hostApi.composer.insertText(note.storedId", "hostApi.composer.setDraft(note.storedId"),
     ("Ask in chat addresses the active composer", JS, "insertText(note.storedId, t('asterisk.askText'", "insertText(null, t('asterisk.askText'"),
@@ -309,6 +309,14 @@ MUTATIONS = [
     ("/notes answers [] instead of 503 without storage", API,
      '        raise HTTPException(status_code=503, detail="note storage unavailable")\n', '        return {"notes": []}\n'),
     ("NOTES_MAX changes without the notes", API, "NOTES_MAX = 50", "NOTES_MAX = 40"),
+    # Not sure and Not useful (4.3.0): two more signals, unsure and not_useful
+    ("Not sure posts already_knew", JS, "const notSure = note => leave(note, 'unsure',", "const notSure = note => leave(note, 'already_knew',"),
+    ("Not useful posts already_knew", JS, "const notUseful = note => leave(note, 'not_useful',", "const notUseful = note => leave(note, 'already_knew',"),
+    ("Not sure leaves the note", JS, "onClick: () => void watcher.notSure(note), children: t('asterisk.notSure')", "onClick: () => {}, children: t('asterisk.notSure')"),
+    ("Not useful leaves the note", JS, "onClick: () => void watcher.notUseful(note), children: t('asterisk.notUseful')", "onClick: () => {}, children: t('asterisk.notUseful')"),
+    ("the backend refuses unsure", API, 'SIGNALS = ("asked", "read", "already_knew", "unsure", "not_useful")', 'SIGNALS = ("asked", "read", "already_knew", "not_useful")'),
+    ("the backend refuses not_useful", API, 'SIGNALS = ("asked", "read", "already_knew", "unsure", "not_useful")', 'SIGNALS = ("asked", "read", "already_knew", "unsure")'),
+    ("the actions row stops wrapping", JS, ".asterisk-actions{display:flex;flex-wrap:wrap;", ".asterisk-actions{display:flex;flex-wrap:nowrap;"),
 ]
 
 
