@@ -1,12 +1,14 @@
 /**
- * Asterisk — names the one thing a long reply did not plainly tell the user, if there is one.
+ * Asterisk — names the one thing a reply did not plainly tell the user, if there is one.
  *
  * When a reply of a chat the user has opened in this app finishes (`message.complete`, status
- * complete, a new reply, at least MIN_CHARS long), the plugin sends the backend that chat's stored id
- * and the frame's `persisted_turn` receipt (the turn's committed row ids). The backend reads that
+ * complete, a new reply), the plugin sends the backend that chat's stored id and the frame's
+ * `persisted_turn` receipt (the turn's committed row ids); the backend alone decides whether the
+ * turn is checked (a tool that may change something, or a long reply) or skipped. It reads that
  * whole turn — the user's message, the assistant's tool calls and their results, the final reply —
  * and a second model (the one chosen for Asterisk in Settings → Models) returns one point or none: an unstated tradeoff, a result that may be
- * off, a silent assumption, an understated irreversible step, a security risk or a cost, saying who
+ * off, a silent assumption, an understated irreversible step, a security risk, a cost, a request left
+ * unanswered, work claimed but not done, a step the user ruled out or one nobody asked for, saying who
  * decided it (the assistant or the user), as a short headline and one sentence. Nothing to flag ->
  * nothing shown (the normal case).
  *
@@ -37,7 +39,6 @@ import { Fragment, jsx, jsxs } from 'react/jsx-runtime'
 
 const { atom, COMPOSER_AREAS, host, SESSION_ROW_AREAS, usePluginI18n, useValue } = sdk
 const ID = 'asterisk'
-export const MIN_CHARS = 3000
 const SEEN_MAX = 500
 const CHECKED_MAX = 300
 const STAGGER_MS = 80
@@ -59,7 +60,7 @@ const en = {
     knew: 'Already knew',
     gotIt: 'Got it',
     dotLabel: 'Worth knowing: a note waiting',
-    failed: detail => `Could not check a long reply: ${detail}`,
+    failed: detail => `Could not check a reply: ${detail}`,
     noHeadline: 'the answer has no headline',
     feedbackFailed: detail => `Could not record "Already knew": ${detail}`,
     pet: 'Worth knowing: a note above the input',
@@ -94,10 +95,10 @@ export function replyKey(text) {
   return `${text.length}:${h.toString(16)}`
 }
 
-/** Whether a message.complete frame is a reply worth a check: complete, new, long enough. */
+/** Whether a message.complete frame is a reply the backend should see: complete and new. */
 export function eligible(payload) {
   const p = payload || {}
-  return p.status === 'complete' && !p.response_reused && typeof p.text === 'string' && p.text.length >= MIN_CHARS
+  return p.status === 'complete' && !p.response_reused && typeof p.text === 'string'
 }
 
 const filled = v => typeof v === 'string' && v.trim() !== ''
@@ -183,13 +184,14 @@ export function createWatcher(ctx, hostApi = host) {
     const sid = event?.session_id
     const payload = event?.payload
     if (!sid || !seen.has(sid) || !eligible(payload)) return
-    const key = replyKey(payload.text)
+    const finalId = payload.persisted_turn?.final_assistant_row_id
+    const key = typeof finalId === 'number' ? `${replyKey(payload.text)}:${finalId}` : replyKey(payload.text)
     if (checked.has(key)) return
     remember(checked, key, true, CHECKED_MAX)
     let note
     try {
       // The reply's OWN chat (not necessarily the focused one) and the turn's receipt. A missing one is
-      // still sent: the backend's refusal becomes the error notice, never a silent skip.
+      // still sent: the backend decides whether to skip it.
       const body = { session_id: seen.get(sid) || null, turn: payload.persisted_turn || null }
       const result = await ctx.rest('/check', { method: 'POST', body })
       note = noteFor(result, { key, storedId: seen.get(sid) })
