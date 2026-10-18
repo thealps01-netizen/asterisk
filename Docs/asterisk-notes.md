@@ -187,8 +187,9 @@ Asterisk is on); a note whose chat no longer exists in the store is dropped then
 cannot be opened nothing is dropped. Restored notes do not unfold the strip or make the pet speak.
 
 - Notes from 4.1.0 are not carried over: 4.1.0 kept them in memory only and wrote none to disk.
-- A downgrade or an uninstall leaves `notes.json` on disk, unread (the core keeps `plugin-data` on
-  remove). Delete `<HERMES_HOME>/plugin-data/asterisk/notes.json` by hand.
+- A downgrade or an uninstall leaves `notes.json` (and a `notes.json.tmp` from an interrupted write)
+  on disk, unread (the core keeps `plugin-data` on remove). Delete the folder
+  `<HERMES_HOME>/plugin-data/asterisk/` by hand.
 - No storage (the host module missing or failing) never loses a point: `/check` still answers and
   writes its ledger line, `/dismiss` still records, and `/notes` answers 503 (one error notice).
 
