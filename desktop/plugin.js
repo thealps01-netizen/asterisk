@@ -15,15 +15,16 @@
  * A point becomes a note in the "Worth knowing" strip at the top of the composer (`composer.top`):
  * the headline in a serif, underlined by a stroke in the theme's accent; with several notes, a
  * numbered list in arrival order. A note of the focused chat (or the only note) shows its sentence,
- * the check's cost and who decided, and "Already knew" / "Not right" / "Got it", plus "Ask in chat"
- * for the focused chat's note (it puts the note into that chat's input through
+ * the check's cost and who decided, and "Already knew" / "Not sure" / "Not useful" / "Got it", plus
+ * "Ask in chat" for the focused chat's note (it puts the note into that chat's input through
  * host.composer.insertText, never sends) or "Open" for another chat's; a note of another chat is
  * otherwise one line with that chat's title and "Open". A chevron folds the strip to its label; a new
- * note unfolds it. A note stays until one of the four buttons removes it, and each removal is recorded
- * (POST /dismiss with asked, read, already_knew or wrong, no text). The sidebar row of a chat with a
- * pending note carries a dot in the accent (`sessionRow.trailing`). For the development phase the
- * backend keeps the pending notes, and they are restored (POST /notes) after a restart. With a Hermes
- * pet on screen it also says so in its bubble. Reduced motion: no stroke drawing and no stagger.
+ * note unfolds it. A note stays until one of the five buttons removes it, and each removal is recorded
+ * (POST /dismiss with asked, read, already_knew, unsure or not_useful, no text). The sidebar row of a
+ * chat with a pending note carries a dot in the accent (`sessionRow.trailing`). For the development
+ * phase the backend keeps the pending notes, and they are restored (POST /notes) after a restart.
+ * With a Hermes pet on screen it also says so in its bubble. Reduced motion: no stroke drawing and no
+ * stagger.
  *
  * Each reply is checked once. A failed check is one error notice, named, never swallowed. The
  * plugin stores nothing of its own: the backend keeps a cost ledger with no text in it and the
@@ -64,7 +65,8 @@ const en = {
     askText: (headline, text) => `Asterisk: ${headline} — ${text}`,
     askFailed: "Could not put the note into this chat's input. Click into the input and try again.",
     knew: 'Already knew',
-    wrong: 'Not right',
+    notSure: 'Not sure',
+    notUseful: 'Not useful',
     gotIt: 'Got it',
     collapse: 'Collapse',
     expand: 'Expand',
@@ -245,7 +247,8 @@ export function createWatcher(ctx, hostApi = host) {
   }
   const gotIt = note => leave(note, 'read', t('asterisk.gotIt'))
   const knew = note => leave(note, 'already_knew', t('asterisk.knew'))
-  const wrong = note => leave(note, 'wrong', t('asterisk.wrong'))
+  const notSure = note => leave(note, 'unsure', t('asterisk.notSure'))
+  const notUseful = note => leave(note, 'not_useful', t('asterisk.notUseful'))
 
   async function ask(note) {
     if (asking.has(note.id)) return
@@ -310,7 +313,7 @@ export function createWatcher(ctx, hostApi = host) {
     notes.set([...back, ...notes.get().filter(n => !backAt.has(n.checkAt))])
   }
 
-  return { capture, noteFocus, onComplete, dismiss, gotIt, knew, wrong, ask, toggleFold, status, restore, notes, folded, seen, checked }
+  return { capture, noteFocus, onComplete, dismiss, gotIt, knew, notSure, notUseful, ask, toggleFold, status, restore, notes, folded, seen, checked }
 }
 
 // Typography, hairlines, the stroke and one chevron: no box, no fill. Every colour is an app theme
@@ -385,7 +388,8 @@ function Entry({ note, index, numbered, focused, motion, t, watcher }) {
           className: 'asterisk-actions',
           children: [
             jsx(Button, { onClick: () => void watcher.knew(note), children: t('asterisk.knew') }, 'knew'),
-            jsx(Button, { onClick: () => void watcher.wrong(note), children: t('asterisk.wrong') }, 'wrong'),
+            jsx(Button, { onClick: () => void watcher.notSure(note), children: t('asterisk.notSure') }, 'unsure'),
+            jsx(Button, { onClick: () => void watcher.notUseful(note), children: t('asterisk.notUseful') }, 'not_useful'),
             here
               ? jsx(Button, { onClick: () => void watcher.ask(note), children: t('asterisk.askInChat') }, 'ask')
               : jsx(Button, { onClick: open, children: t('asterisk.open') }, 'open'),

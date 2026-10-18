@@ -309,10 +309,13 @@ MUTATIONS = [
     ("/notes answers [] instead of 503 without storage", API,
      '        raise HTTPException(status_code=503, detail="note storage unavailable")\n', '        return {"notes": []}\n'),
     ("NOTES_MAX changes without the notes", API, "NOTES_MAX = 50", "NOTES_MAX = 40"),
-    # Not right (4.3.0): a fourth signal, wrong
-    ("Not right posts already_knew", JS, "const wrong = note => leave(note, 'wrong',", "const wrong = note => leave(note, 'already_knew',"),
-    ("Not right leaves the note", JS, "onClick: () => void watcher.wrong(note), children: t('asterisk.wrong')", "onClick: () => {}, children: t('asterisk.wrong')"),
-    ("the backend refuses wrong", API, 'SIGNALS = ("asked", "read", "already_knew", "wrong")', 'SIGNALS = ("asked", "read", "already_knew")'),
+    # Not sure and Not useful (4.3.0): two more signals, unsure and not_useful
+    ("Not sure posts already_knew", JS, "const notSure = note => leave(note, 'unsure',", "const notSure = note => leave(note, 'already_knew',"),
+    ("Not useful posts already_knew", JS, "const notUseful = note => leave(note, 'not_useful',", "const notUseful = note => leave(note, 'already_knew',"),
+    ("Not sure leaves the note", JS, "onClick: () => void watcher.notSure(note), children: t('asterisk.notSure')", "onClick: () => {}, children: t('asterisk.notSure')"),
+    ("Not useful leaves the note", JS, "onClick: () => void watcher.notUseful(note), children: t('asterisk.notUseful')", "onClick: () => {}, children: t('asterisk.notUseful')"),
+    ("the backend refuses unsure", API, 'SIGNALS = ("asked", "read", "already_knew", "unsure", "not_useful")', 'SIGNALS = ("asked", "read", "already_knew", "not_useful")'),
+    ("the backend refuses not_useful", API, 'SIGNALS = ("asked", "read", "already_knew", "unsure", "not_useful")', 'SIGNALS = ("asked", "read", "already_knew", "unsure")'),
     ("the actions row stops wrapping", JS, ".asterisk-actions{display:flex;flex-wrap:wrap;", ".asterisk-actions{display:flex;flex-wrap:nowrap;"),
 ]
 

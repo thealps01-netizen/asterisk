@@ -36,7 +36,8 @@ and records in the ledger, without any text, how it left:
 | Ask in chat | `asked` | useful, taken into the chat |
 | Got it | `read` | read |
 | Already knew | `already_knew` | right, but not news |
-| Not right | `wrong` | wrong or irrelevant (a false alarm) |
+| Not sure | `unsure` | cannot tell whether it is right |
+| Not useful | `not_useful` | not worth showing (wrong, beside the point or trivial) |
 
 "Ask in chat" is on a note of the chat you are in; a note of another chat has "Open" instead, which
 opens that chat and keeps the note.
