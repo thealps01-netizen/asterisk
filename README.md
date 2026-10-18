@@ -20,12 +20,18 @@ the quality of the points on them are unknown. Each check, and each skipped turn
 (without any text) in a ledger. See `Docs/asterisk-notes.md` for how it works, the cost and the
 review.
 
+For the development phase, while the notes' usefulness is measured, the text of each pending note
+(headline, sentence, chat title, model and cost) is kept on disk in
+`plugin-data/asterisk/notes.json` in your Hermes home until you dismiss it, so notes survive an app
+restart. It is separate from the ledger, which holds no text, and it is left there on uninstall
+(delete it by hand). This will be turned off later.
+
 ## Layout
 
 | Path | What |
 |---|---|
 | `desktop/plugin.js` | Desktop half: picks replies, calls the backend, shows the headline strip above the input and the sidebar dot |
-| `dashboard/plugin_api.py` | Backend: `POST /check`, `POST /feedback`, `POST /status`, reading the turn, redaction and caps, the model call, the ledger |
+| `dashboard/plugin_api.py` | Backend: `POST /check`, `POST /dismiss`, `POST /notes`, `POST /status`, reading the turn, redaction and caps, the model call, the ledger, the pending notes |
 | `eval/compare_checkers.py` | Offline evaluation: 1.0.0 against this checker on past turns (opt-in, below) |
 | `plugin.yaml`, `dashboard/manifest.json`, `__init__.py` | Hermes plugin metadata |
 | `tests/` | Gates (below) |

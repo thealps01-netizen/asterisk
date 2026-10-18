@@ -1,5 +1,26 @@
 # Changelog
 
+## 4.2.0 (2026-10-18)
+
+- Note text is now kept on disk until you dismiss the note, as a development-phase measure: it lets
+  notes survive an app restart while their usefulness is measured, and will be turned off later. Each
+  pending note's headline, sentence, chat title, model and cost sit in
+  `plugin-data/asterisk/notes.json` in your Hermes home (at most 50 notes, oldest dropped), apart from
+  the ledger, which still holds no text. "Ask in chat", "Got it" and "Already knew" each remove it; a
+  note whose chat was deleted is dropped at the next start. Uninstalling Asterisk leaves the file;
+  delete it by hand.
+- "Ask in chat" on a note of the chat you are in puts the note into that chat's input, after anything
+  you have typed, for you to edit and send. It never sends by itself, so no turn on your main model
+  starts until you press send. The note then leaves the strip. A note of another chat keeps "Open".
+- A chevron in the strip's header folds it to one line ("Worth knowing · 3 notes" with the accent
+  stroke). The notes stay; a new note unfolds it.
+- Each way a note leaves is recorded in the ledger, without any text: `asked` (Ask in chat), `read`
+  (Got it, which recorded nothing before) and `already_knew` (as before). `POST /feedback` is now
+  `POST /dismiss {check_at, signal}`, and `POST /notes` returns the pending notes.
+- Notes from before the upgrade are not carried over: 4.1.0 kept them in memory only. No change to
+  what is checked, the prompt, the trigger or how the model is chosen. The desktop half and the
+  backend must come from the same release.
+
 ## 4.1.0 (2026-10-18)
 
 - Cost first: far more turns are checked now, so the cost can rise about five times. On one user's

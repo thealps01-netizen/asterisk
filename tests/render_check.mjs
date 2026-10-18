@@ -24,13 +24,14 @@
  *      skip answer { points: [], skipped } shows no note and no toast (the user's live case).
  *   5. The strip: nothing when no note is pending; a point is a note, never a toast. One note: the
  *      label "Worth knowing", no number, headline, sentence, meta "<model> · <cost> · decided by ...",
- *      "Already knew" and "Got it" ("Open" only for another chat). Several notes: "Worth knowing ·
- *      N notes", numbered 1..N in arrival order; the focused chat's note expanded, the others one
- *      line "<title> · <model> <cost>" ("Untitled chat" without a title) with "Open".
+ *      "Already knew", "Ask in chat" for the focused chat ("Open" for another chat) and "Got it".
+ *      Several notes: "Worth knowing · N notes", numbered 1..N in arrival order; the focused chat's
+ *      note expanded, the others one line "<title> · <model> <cost>" ("Untitled chat" without a
+ *      title) with "Open" only.
  *   6. Buttons: "Open" opens that note's own chat and keeps the note (it expands once that chat is
- *      focused); "Got it" removes only that note and posts nothing; "Already knew" removes it and
- *      posts /feedback { check_at } with that check's `at`; a failed /feedback is one named error
- *      toast; the last note gone, the strip is gone.
+ *      focused); "Got it" removes only that note and posts /dismiss { check_at, signal: 'read' };
+ *      "Already knew" removes it and posts /dismiss { check_at, signal: 'already_knew' } with that
+ *      check's `at`; a failed /dismiss is one named error toast; the last note gone, the strip is gone.
  *   7. Sidebar dot: one dot, labelled, on each row whose chat has a pending note; nothing on other
  *      rows; a chat's last note dismissed, its dot goes.
  *   8. Motion: reduced motion -> data-motion="reduce" and no inline animation-delay anywhere;
@@ -49,14 +50,37 @@
  *      only when update_notice is true; (c) old_install: true stops later /check posts and shows one
  *      asterisk-old-install warning with its copy; (d) ready: true without old_install, or a failed or
  *      malformed /status, keeps posting as today with no status toast; (e) the same plugin.js against
- *      an SDK without SESSION_ROW_AREAS (or without COMPOSER_AREAS) imports, and register does not
- *      throw, registers nothing, adds no listener, posts /status { desktop_ready: false } once and
- *      shows the update warning only when the answer says update_notice: true.
+ *      an SDK without SESSION_ROW_AREAS, without COMPOSER_AREAS or whose host has no
+ *      composer.insertText imports, and register does not throw, registers nothing, adds no listener,
+ *      posts /status { desktop_ready: false } once (and no /notes) and shows the update warning only
+ *      when the answer says update_notice: true.
  *  14. No model chosen: a /check failure naming "no model chosen" is one asterisk-no-model warning
  *      with its copy, never the asterisk-error toast; a second one adds no notice; checking does not
  *      stop, so the next reply is still posted (a model chosen mid-session works on the next reply).
  *      A reply without `model` names no model and leaves no stray separator.
- *  REST counts in locks 1-12 count /check and /feedback calls only.
+ *  23. Note actions (4.2.0):
+ *      (a) buttons: the focused chat's single note [Already knew] [Ask in chat] [Got it]; a single
+ *          note of another chat [Already knew] [Open] [Got it]; a one-line note [Open] only.
+ *      (b) Ask in chat: one host.composer.insertText(the note's storedId, "Asterisk: <headline> —
+ *          <text>", { mode: 'block' }); true -> the note leaves and /dismiss { check_at, signal:
+ *          'asked' } is posted; false or a throw -> the note stays, nothing posted, one
+ *          asterisk-ask-failed warning; two clicks while pending -> one call; long text in full.
+ *      (c) Got it posts signal 'read', Already knew 'already_knew'; a failed post names the button.
+ *      (d) fold: the chevron (aria-expanded, Collapse / Expand) folds the strip to "Worth knowing ·
+ *          N notes" with the stroke, no entry, dots and REST untouched; unfolds with every note in
+ *          order; a new live note unfolds it; reduced motion animates nothing inline and every CSS
+ *          transition or animation is keyed on [data-motion="full"].
+ *      (e) restart: a fresh registration posts /notes {} once after /status (never when ready: false
+ *          or old_install: true; still after a failed or malformed /status) and shows the backend's
+ *          entries in `at` order, focused one with Ask in chat, the right dots, no pet line, folding
+ *          unchanged; an entry without a headline is skipped silently; a live note it also holds
+ *          shows once; a note dismissed while /notes is pending is not restored; a failed /notes is
+ *          one asterisk-restore-error toast.
+ *      (f) 13e's variant without host.composer.insertText.
+ *      (g) every t() key resolves, the new ones included (lock 11's count raised).
+ *  REST counts in locks 1-12 count /check and /dismiss calls only (/status and /notes have their own
+ *  lists). The stub's host.composer.insertText records its calls and resolves a settable result, or
+ *  rejects, or waits (deferred) until the lock resolves it.
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -94,8 +118,9 @@ writeFileSync(path.join(OUT, 'react-jsx.mjs'), `import { createRequire } from 'n
 const m = createRequire(${anchor})('react/jsx-runtime')
 export const jsx = m.jsx, jsxs = m.jsxs, Fragment = m.Fragment
 `)
-// The SDK stub; an old core's SDK is the same without SESSION_ROW_AREAS or COMPOSER_AREAS.
-const stubSource = ({ composer = true, rows = true } = {}) => `import { createRequire } from 'node:module'
+// The SDK stub; an old core's SDK is the same without SESSION_ROW_AREAS, COMPOSER_AREAS or
+// host.composer.insertText.
+const stubSource = ({ composer = true, rows = true, insert = true } = {}) => `import { createRequire } from 'node:module'
 const React = createRequire(${anchor})('react')
 // listen: the plugin's own subscriptions (counted by the locks); views: the hooks' (useValue).
 export function atom(v) {
@@ -115,12 +140,23 @@ export function usePluginI18n(id) {
 }
 ${composer ? "export const COMPOSER_AREAS = { top: 'composer.top', bottom: 'composer.bottom' }" : ''}
 ${rows ? "export const SESSION_ROW_AREAS = { leading: 'sessionRow.leading', trailing: 'sessionRow.trailing' }" : ''}
-export const calls = { notify: [], opened: [], revealPane: [] }
+export const calls = { notify: [], opened: [], revealPane: [], insert: [] }
+// composer.insertText records each call, then rejects with composer.throws, waits (deferred) until a
+// test resolves composer.pending, or resolves composer.result.
+export const composer = { result: true, throws: null, deferred: false, pending: [] }
 export const host = {
   state: { focusedSessionId: atom('rt-1'), focusedStoredSessionId: atom('st-1') },
   notify: n => { calls.notify.push(n) },
   openSession: async sid => { calls.opened.push(sid) },
-  revealPane: (...a) => { calls.revealPane.push(a) }
+  revealPane: (...a) => { calls.revealPane.push(a) },
+  ${insert ? `composer: {
+    insertText: (sid, text, opts) => {
+      calls.insert.push([sid, text, opts])
+      if (composer.throws) return Promise.reject(new Error(composer.throws))
+      if (composer.deferred) return new Promise(r => { composer.pending.push(r) })
+      return Promise.resolve(composer.result)
+    }
+  }` : ''}
 }
 `
 const source = readFileSync(SRC, 'utf8')
@@ -149,8 +185,10 @@ console.error = (...a) => { reactWarnings.push(a.map(String).join(' ')) }
 const registered = []
 const listeners = new Map()
 const disposers = []
-const rest = [] // /check and /feedback calls; /status goes to statusCalls
+const rest = [] // /check and /dismiss calls; /status goes to statusCalls, /notes to notesCalls
 const statusCalls = []
+const notesCalls = []
+let notesAnswer = { notes: [] }
 let reply = { points: [], cost_usd: 0.0213, cost_status: 'estimated', model: 'fake-model-x', at: 1, title: null }
 let restFails = null
 const pet = { visible: false, said: [] }
@@ -163,6 +201,10 @@ const ctx = {
     if (p === '/status') {
       statusCalls.push(opts)
       return { ready: true, update_notice: false, old_install: false }
+    }
+    if (p === '/notes') {
+      notesCalls.push(opts)
+      return notesAnswer
     }
     rest.push([p, opts])
     if (restFails) throw new Error(restFails)
@@ -200,11 +242,13 @@ const $ = (el, sel) => el.querySelector(sel)
 const $$ = (el, sel) => [...el.querySelectorAll(sel)]
 const text = el => (el?.textContent ?? '').trim()
 const click = el => act(async () => { el.click(); await settle() })
-const buttons = el => $$(el, 'button').map(b => text(b))
+// The note's action buttons; the header's chevron (no text) is checked on its own.
+const buttons = el => $$(el, 'button:not([data-asterisk="fold"])').map(b => text(b))
 const button = (el, label) => $$(el, 'button').find(b => text(b) === label)
 
 // 1. registration
 mod.default.register(ctx)
+await settle()
 await settle()
 const areas = registered.map(c => c.area)
 check(registered.length === 2 && same(areas, ['composer.top', 'sessionRow.trailing']),
@@ -218,6 +262,8 @@ check(listeners.get('message.complete')?.size === 1 && listeners.size === 1, 'on
 check(stub.host.state.focusedSessionId.subs.size === 1 && stub.host.state.focusedStoredSessionId.subs.size === 1, 'focus is followed')
 check(statusCalls.length === 1 && same(statusCalls[0], { method: 'POST', body: { desktop_ready: true } }) && stub.calls.notify.length === 0,
   `13a. registration posts /status { desktop_ready: true } once; ready, no old install -> no notice (${JSON.stringify(statusCalls)})`)
+check(notesCalls.length === 1 && same(notesCalls[0], { method: 'POST', body: {} }) && rest.length === 0,
+  `23e. once /status settles, registration posts /notes {} once; nothing else (${JSON.stringify(notesCalls)})`)
 
 const strip = mount(createElement(stripC.render))
 const ROWS = ['st-1', 'st-2', 'st-3', 'st-4', 'st-5']
@@ -270,8 +316,8 @@ const stroke = $(entries[0], '[data-asterisk="stroke"]')
 check(stroke?.getAttribute('aria-hidden') === 'true' && stroke?.getAttribute('viewBox') === '0 0 200 8' && stroke?.getAttribute('preserveAspectRatio') === 'none'
   && stroke?.querySelector('path')?.getAttribute('d') === 'M2 5 C 40 2, 80 7, 120 4 S 180 3, 198 5', 'the headline is underlined by the hidden SVG stroke')
 check(text($(entries[0], '[data-asterisk="meta"]')) === 'fake-model-x · ~$0.02 · decided by assistant', `meta: the model that answered, the cost, who decided (${text($(entries[0], '[data-asterisk="meta"]'))})`)
-check(same(buttons(strip.el), ['Already knew', 'Got it']) && $$(strip.el, 'button').every(b => b.getAttribute('type') === 'button'),
-  `the focused chat's note offers "Already knew" and "Got it", no "Open" (${buttons(strip.el)})`)
+check(same(buttons(strip.el), ['Already knew', 'Ask in chat', 'Got it']) && $$(strip.el, 'button').every(b => b.getAttribute('type') === 'button'),
+  `23a. the focused chat's single note offers [Already knew] [Ask in chat] [Got it], no "Open" (${buttons(strip.el)})`)
 check(pet.said.length === 0, 'no pet on screen -> nothing is said')
 const texts = []
 const collect = el => {
@@ -314,10 +360,10 @@ check(s?.getAttribute('data-count') === '3' && text($(s, '[data-asterisk="label"
 check(same($$(s, '[data-asterisk="num"]').map(text), ['1', '2', '3']) && same(entries.map(e => text($(e, '[data-asterisk="headline"]'))), [H1, 'Old backups deleted', 'Release tag pushed']),
   'numbered 1, 2, 3 in arrival order')
 check(entries[2].getAttribute('data-expanded') === 'true' && text($(entries[2], '[data-asterisk="text"]')).startsWith('The assistant pushed')
-  && text($(entries[2], '[data-asterisk="meta"]')) === 'fake-model-x · ~$0.04 · decided by assistant' && same(buttons(entries[2]), ['Already knew', 'Got it']),
-  `the focused chat's note is expanded (${text($(entries[2], '[data-asterisk="meta"]'))})`)
+  && text($(entries[2], '[data-asterisk="meta"]')) === 'fake-model-x · ~$0.04 · decided by assistant' && same(buttons(entries[2]), ['Already knew', 'Ask in chat', 'Got it']),
+  `the focused chat's note is expanded, with "Ask in chat" (${text($(entries[2], '[data-asterisk="meta"]'))})`)
 check(entries[0].getAttribute('data-expanded') === 'false' && !$(entries[0], '[data-asterisk="text"]') && text($(entries[0], '[data-asterisk="meta"]')) === 'Deploy plan · fake-model-x ~$0.02'
-  && same(buttons(entries[0]), ['Open']), `another chat's note is one line "<title> · <model> <cost>" and "Open" (${text($(entries[0], '[data-asterisk="meta"]'))})`)
+  && same(buttons(entries[0]), ['Open']), `23a. another chat's note is one line "<title> · <model> <cost>" and only "Open" (${text($(entries[0], '[data-asterisk="meta"]'))} | ${buttons(entries[0])})`)
 check(text($(entries[1], '[data-asterisk="meta"]')) === 'Untitled chat · fake-model-x <$0.01' && same(buttons(entries[1]), ['Open']),
   `a note without a title shows "Untitled chat" (${text($(entries[1], '[data-asterisk="meta"]'))})`)
 check(same(dots(), { 'st-1': 1, 'st-2': 1, 'st-3': 1, 'st-4': 0, 'st-5': 0 }) && $$(rows['st-2'].el, '[data-asterisk="dot"]')[0]?.getAttribute('aria-label') === 'Worth knowing: a note waiting'
@@ -325,6 +371,45 @@ check(same(dots(), { 'st-1': 1, 'st-2': 1, 'st-3': 1, 'st-4': 0, 'st-5': 0 }) &&
   `one labelled dot on each chat with a pending note, nothing on the others (${JSON.stringify(dots())})`)
 collect(strip.el)
 ROWS.forEach(id => collect(rows[id].el))
+
+// 23d. fold: the chevron folds the strip to its label and back; the notes, the dots and the backend are untouched
+const HEADS3 = [H1, 'Old backups deleted', 'Release tag pushed']
+const DOTS3 = { 'st-1': 1, 'st-2': 1, 'st-3': 1, 'st-4': 0, 'st-5': 0 }
+let fold = $(strip.el, '[data-asterisk="fold"]')
+const chevron = $(fold, 'svg')
+check(fold?.tagName === 'BUTTON' && fold.getAttribute('type') === 'button' && fold.classList.contains('asterisk-fold') && fold.getAttribute('aria-expanded') === 'true'
+  && fold.getAttribute('aria-label') === 'Collapse' && fold.getAttribute('title') === 'Collapse' && fold.parentElement?.classList.contains('asterisk-head')
+  && fold.parentElement === $(s, '[data-asterisk="label"]')?.parentElement && !$(s, '[data-asterisk="label"]').contains(fold)
+  && chevron?.getAttribute('aria-hidden') === 'true' && chevron?.getAttribute('viewBox') === '0 0 12 12'
+  && chevron?.querySelector('path')?.getAttribute('d') === 'M3 7.5 L6 4.5 L9 7.5' && chevron?.querySelector('path')?.getAttribute('stroke') === 'currentColor'
+  && s.getAttribute('data-folded') === 'false',
+  `23d. the chevron sits beside the label in div.asterisk-head: aria-expanded "true", label "Collapse", hidden 12x12 SVG in currentColor (${fold?.outerHTML.slice(0, 200)})`)
+const restFold = rest.length, notesFold = notesCalls.length, statusFold = statusCalls.length
+await click(fold)
+s = $(strip.el, '[data-asterisk="strip"]')
+fold = $(strip.el, '[data-asterisk="fold"]')
+let label = $(s, '[data-asterisk="label"]')
+check(s?.getAttribute('data-folded') === 'true' && !$(s, 'ol') && $$(strip.el, '[data-asterisk="entry"]').length === 0 && text(label) === 'Worth knowing · 3 notes'
+  && $(label, '[data-asterisk="stroke"]')?.querySelector('path')?.getAttribute('d') === 'M2 5 C 40 2, 80 7, 120 4 S 180 3, 198 5'
+  && text($(label, '[data-asterisk="stroke"]')?.parentElement) === 'Worth knowing'
+  && fold?.getAttribute('aria-expanded') === 'false' && fold?.getAttribute('aria-label') === 'Expand' && fold?.getAttribute('title') === 'Expand'
+  && same(dots(), DOTS3) && rest.length === restFold && notesCalls.length === notesFold && statusCalls.length === statusFold && s.getAttribute('data-count') === '3',
+  `23d. a click folds: data-folded "true", no entry, label "Worth knowing · 3 notes" with the stroke under the name, "Expand", dots unchanged, no REST call (${text(label)} | ${JSON.stringify(dots())})`)
+collect(strip.el)
+reduce = true
+strip.rerender(createElement(stripC.render))
+check($(strip.el, '[data-asterisk="strip"]')?.getAttribute('data-motion') === 'reduce' && $(strip.el, '[data-asterisk="strip"]')?.getAttribute('data-folded') === 'true'
+  && !$$(strip.el, '*').some(e => /animation|transition/i.test(e.getAttribute('style') || '')),
+  '23d. folded under reduced motion: no inline style animates')
+reduce = false
+strip.rerender(createElement(stripC.render))
+await click($(strip.el, '[data-asterisk="fold"]'))
+s = $(strip.el, '[data-asterisk="strip"]')
+entries = $$(strip.el, '[data-asterisk="entry"]')
+check(s?.getAttribute('data-folded') === 'false' && same(entries.map(e => text($(e, '[data-asterisk="headline"]'))), HEADS3)
+  && same($$(s, '[data-asterisk="num"]').map(text), ['1', '2', '3']) && text($(s, '[data-asterisk="label"]')) === 'Worth knowing · 3 notes'
+  && $(s, '[data-asterisk="fold"]')?.getAttribute('aria-expanded') === 'true' && same(dots(), DOTS3) && rest.length === restFold && notesCalls.length === notesFold,
+  `23d. a second click unfolds with every note back in order, "Collapse" again, no REST call (${entries.map(e => text($(e, '[data-asterisk="headline"]')))})`)
 
 // 8. motion
 check(s?.getAttribute('data-motion') === 'full' && same(entries.map(e => e.style.animationDelay), ['0ms', '80ms', '160ms']),
@@ -340,6 +425,10 @@ check(rules.some(r => r.sel.includes('[data-motion="reduce"]') && r.sel.includes
   'the CSS shows the stroke fully drawn (dash offset 0) under [data-motion="reduce"]')
 const animated = rules.filter(r => /(^|;)\s*animation\s*:/.test(r.body))
 check(animated.length >= 2 && animated.every(r => r.sel.includes('[data-motion="full"]')), `every animation is keyed on [data-motion="full"] (${animated.map(r => r.sel)})`)
+const moving = rules.filter(r => /(^|;)\s*(transition|animation)\s*:/.test(r.body))
+check(moving.some(r => /(^|;)\s*transition\s*:/.test(r.body) && r.sel.includes('asterisk-fold')) && moving.every(r => r.sel.includes('[data-motion="full"]'))
+  && rules.some(r => r.sel.includes('.asterisk-fold[aria-expanded="false"]') && /transform:\s*rotate\(180deg\)/.test(r.body)),
+  `23d. folded rotates the chevron 180deg; every transition or animation in the CSS is keyed on [data-motion="full"] (${moving.map(r => r.sel)})`)
 check(rules.some(r => r.sel.includes('[data-motion="full"]') && /stroke-dashoffset:\s*400/.test(r.body) && /animation:\s*asterisk-draw 1\.1s \.3s/.test(r.body)),
   'under full motion the stroke draws from dash offset 400 (1.1s, .3s delay)')
 reduce = false
@@ -358,21 +447,23 @@ check(entries[0].getAttribute('data-expanded') === 'true' && entries[2].getAttri
 let posts = rest.length
 await click(button(entries[0], 'Got it'))
 entries = $$(strip.el, '[data-asterisk="entry"]')
-check(entries.length === 2 && same($$(strip.el, '[data-asterisk="num"]').map(text), ['1', '2']) && rest.length === posts
+check(entries.length === 2 && same($$(strip.el, '[data-asterisk="num"]').map(text), ['1', '2']) && rest.length === posts + 1
   && same(entries.map(e => text($(e, '[data-asterisk="headline"]'))), ['Old backups deleted', 'Release tag pushed']),
-  '"Got it" removes only that note (3 -> 2, renumbered 1, 2) and posts nothing')
+  '"Got it" removes only that note (3 -> 2, renumbered 1, 2)')
+check(same(rest.at(-1), ['/dismiss', { method: 'POST', body: { check_at: 1000.5, signal: 'read' } }]),
+  `23c. "Got it" posts /dismiss { check_at, signal: 'read' } with its check's at (${JSON.stringify(rest.at(-1))})`)
 check(same(dots(), { 'st-1': 0, 'st-2': 1, 'st-3': 1, 'st-4': 0, 'st-5': 0 }), `a chat's last note dismissed, its dot goes (${JSON.stringify(dots())})`)
 
 // 6. Already knew
 await focus('rt-2', 'st-2')
 entries = $$(strip.el, '[data-asterisk="entry"]')
 await click(button(entries[0], 'Already knew'))
-check(rest.length === posts + 1 && rest.at(-1)[0] === '/feedback' && rest.at(-1)[1]?.method === 'POST' && same(rest.at(-1)[1]?.body, { check_at: 2000.25 })
-  && $$(strip.el, '[data-asterisk="entry"]').length === 1, `"Already knew" removes the note and posts /feedback { check_at } with its check's at (${JSON.stringify(rest.at(-1))})`)
+check(rest.length === posts + 2 && same(rest.at(-1), ['/dismiss', { method: 'POST', body: { check_at: 2000.25, signal: 'already_knew' } }])
+  && $$(strip.el, '[data-asterisk="entry"]').length === 1, `23c. "Already knew" removes the note and posts /dismiss { check_at, signal: 'already_knew' } with its check's at (${JSON.stringify(rest.at(-1))})`)
 entries = $$(strip.el, '[data-asterisk="entry"]')
 check(text($(strip.el, '[data-asterisk="label"]')) === 'Worth knowing' && $$(strip.el, '[data-asterisk="num"]').length === 0
   && text($(entries[0], '[data-asterisk="meta"]')) === 'Release notes · fake-model-x · ~$0.04 · decided by assistant' && same(buttons(entries[0]), ['Already knew', 'Open', 'Got it']),
-  `a single note of another chat is expanded, names its chat and offers "Open" (${text($(entries[0], '[data-asterisk="meta"]'))} | ${buttons(entries[0])})`)
+  `23a. a single note of another chat is expanded, names its chat and offers [Already knew] [Open] [Got it] (${text($(entries[0], '[data-asterisk="meta"]'))} | ${buttons(entries[0])})`)
 collect(strip.el)
 restFails = 'network down'
 const warn = console.warn
@@ -380,7 +471,7 @@ console.warn = () => {}
 await click(button(entries[0], 'Already knew'))
 let n = stub.calls.notify.at(-1)
 check(stub.calls.notify.length === 1 && n?.id === 'asterisk-feedback-error' && n?.kind === 'error' && n?.title === 'Asterisk'
-  && n?.message === 'Could not record "Already knew": network down', `a failed /feedback is one named error toast (${JSON.stringify(n)})`)
+  && n?.message === 'Could not record "Already knew": network down', `23c. a failed /dismiss from "Already knew" is one named error toast (${JSON.stringify(n)})`)
 check(strip.el.innerHTML === '' && ROWS.every(id => rows[id].el.innerHTML === ''), 'the last note removed, the strip and every dot are gone')
 
 // 10. errors
@@ -452,6 +543,85 @@ const laterMeta = text($(strip.el, '[data-asterisk="meta"]'))
 check(laterMeta === 'Later chat · ~$0.02 · decided by assistant', `a reply without model shows no model and no stray separator (${laterMeta})`)
 await click(button(strip.el, 'Got it'))
 check(strip.el.innerHTML === '', 'that note dismissed, the strip is gone')
+
+// 23b. Ask in chat: the note goes into ITS chat's composer (block mode, never sent); only a true insert removes it
+console.warn = () => {}
+const AH = `Long headline ${'h'.repeat(220)} end`
+const AT = `A long sentence ${'s'.repeat(900)} — the very end.`
+const ASK = `Asterisk: ${AH} — ${AT}`
+const ASK_FAILED = "Could not put the note into this chat's input. Click into the input and try again."
+const askWarnings = list => list.length > 0 && list.every(x => x.id === 'asterisk-ask-failed' && x.kind === 'warning' && x.title === 'Asterisk' && x.message === ASK_FAILED)
+reply = { points: [point(AH, AT)], cost_usd: 0.01, cost_status: 'estimated', model: 'fake-model-x', at: 5000.5, title: 'Ask chat' }
+await focus('rt-3', 'st-3')
+await emit('rt-3', frame('ask', 200))
+const ins = stub.calls.insert
+const postsAsk = rest.length
+let toastsAsk = stub.calls.notify.length
+check(ins.length === 0 && same(buttons(strip.el), ['Already knew', 'Ask in chat', 'Got it']), `23b. a note of the focused chat offers "Ask in chat"; nothing inserted yet (${buttons(strip.el)})`)
+stub.composer.result = false
+await click(button(strip.el, 'Ask in chat'))
+let addedAsk = stub.calls.notify.slice(toastsAsk)
+check(ins.length === 1 && same(ins[0], ['st-3', ASK, { mode: 'block' }]) && $$(strip.el, '[data-asterisk="entry"]').length === 1 && rest.length === postsAsk
+  && addedAsk.length === 1 && askWarnings(addedAsk),
+  `23b. insert answers false: one insertText(storedId, text, { mode: 'block' }) call, the note stays, nothing posted, one asterisk-ask-failed warning (${JSON.stringify(ins[0]?.[0])}, ${JSON.stringify(addedAsk)})`)
+stub.composer.result = true
+stub.composer.throws = 'no composer claimed it'
+toastsAsk = stub.calls.notify.length
+await click(button(strip.el, 'Ask in chat'))
+addedAsk = stub.calls.notify.slice(toastsAsk)
+check(ins.length === 2 && $$(strip.el, '[data-asterisk="entry"]').length === 1 && rest.length === postsAsk && addedAsk.length === 1 && askWarnings(addedAsk),
+  `23b. insert throws: the note stays, nothing posted, one asterisk-ask-failed warning (${JSON.stringify(addedAsk)})`)
+stub.composer.throws = null
+stub.composer.deferred = true
+toastsAsk = stub.calls.notify.length
+await click(button(strip.el, 'Ask in chat'))
+await click(button(strip.el, 'Ask in chat'))
+check(ins.length === 3 && stub.composer.pending.length === 1 && $$(strip.el, '[data-asterisk="entry"]').length === 1 && rest.length === postsAsk,
+  `23b. two clicks while an insert is pending -> one insertText call, the note waits (${ins.length - 2} calls)`)
+stub.composer.deferred = false
+await act(async () => {
+  stub.composer.pending.splice(0).forEach(r => r(true))
+  await settle()
+  await settle()
+})
+check(strip.el.innerHTML === '' && rest.length === postsAsk + 1 && same(rest.at(-1), ['/dismiss', { method: 'POST', body: { check_at: 5000.5, signal: 'asked' } }])
+  && stub.calls.notify.length === toastsAsk,
+  `23b. insert answers true: the note leaves and /dismiss { check_at, signal: 'asked' } is posted, no toast (${JSON.stringify(rest.at(-1))})`)
+check(ins.every(c => c[0] === 'st-3' && c[1] === ASK && same(c[2], { mode: 'block' })) && ASK.includes(AH) && ASK.includes(AT) && ASK.length === AH.length + AT.length + 13,
+  `23b. a long headline and sentence are inserted in full, as "Asterisk: <headline> — <text>" (${ins.map(c => c[1].length)} chars)`)
+
+// 23c. a failed /dismiss from "Got it" names its button
+reply = { points: [point('Got it fails', 'The assistant left the cache warm without saying so.')], cost_usd: 0.01, cost_status: 'estimated', model: 'fake-model-x', at: 5100.5, title: null }
+await emit('rt-3', frame('gotit fails', 210))
+restFails = 'network down'
+toastsAsk = stub.calls.notify.length
+await click(button(strip.el, 'Got it'))
+restFails = null
+addedAsk = stub.calls.notify.slice(toastsAsk)
+check(addedAsk.length === 1 && addedAsk[0].id === 'asterisk-feedback-error' && addedAsk[0].kind === 'error' && addedAsk[0].message === 'Could not record "Got it": network down'
+  && same(rest.at(-1), ['/dismiss', { method: 'POST', body: { check_at: 5100.5, signal: 'read' } }]) && strip.el.innerHTML === '',
+  `23c. a failed /dismiss from "Got it" is one named error toast 'Could not record "Got it": network down' (${JSON.stringify(addedAsk)})`)
+
+// 23d. one note folded; folded, a new live note unfolds the strip
+reply = { points: [point('Folded alone', 'The assistant kept the old port without saying it is taken.')], cost_usd: 0.01, cost_status: 'estimated', model: 'fake-model-x', at: 5200.5, title: null }
+await emit('rt-3', frame('fold one', 220))
+await click($(strip.el, '[data-asterisk="fold"]'))
+s = $(strip.el, '[data-asterisk="strip"]')
+label = $(s, '[data-asterisk="label"]')
+check(s?.getAttribute('data-folded') === 'true' && text(label) === 'Worth knowing · 1 note' && $(label, '[data-asterisk="stroke"]') && $$(strip.el, '[data-asterisk="entry"]').length === 0,
+  `23d. one note folded: label "Worth knowing · 1 note" with the stroke, no entry (${text(label)})`)
+const postsFold = rest.length
+reply = { points: [point('Unfolds it', 'The assistant renamed the branch without saying the PR now points nowhere.')], cost_usd: 0.01, cost_status: 'estimated', model: 'fake-model-x', at: 5300.5, title: null }
+await emit('rt-3', frame('fold two', 230))
+s = $(strip.el, '[data-asterisk="strip"]')
+check(s?.getAttribute('data-folded') === 'false' && $(s, '[data-asterisk="fold"]')?.getAttribute('aria-expanded') === 'true'
+  && same($$(strip.el, '[data-asterisk="entry"]').map(e => text($(e, '[data-asterisk="headline"]'))), ['Folded alone', 'Unfolds it']) && rest.length === postsFold + 1,
+  `23d. folded, a new live note unfolds the strip and shows every note (${s?.getAttribute('data-folded')})`)
+await click(button(strip.el, 'Got it'))
+await click(button(strip.el, 'Got it'))
+console.warn = warn
+check(strip.el.innerHTML === '' && same(rest.slice(-2).map(r => r[1].body), [{ check_at: 5200.5, signal: 'read' }, { check_at: 5300.5, signal: 'read' }]),
+  'both notes dismissed with "Got it" (two read signals), the strip is gone')
 check(mod.fmtCost(null, 'unknown') === '' && mod.fmtCost(0.7, 'unknown') === '' && mod.fmtCost(0, 'included') === 'subscription' && mod.fmtCost(0.38, 'actual') === '$0.38',
   'cost text: unpriced is empty even with an amount stored, subscription named, billed as is')
 const unpriced = mod.noteFor({ points: [point('H', 'T')], cost_usd: null, cost_status: 'unknown', at: 5 }, { key: 'k', storedId: 'st-9' })
@@ -474,7 +644,8 @@ check(texts.length > 10 && starred.length === 0, `no rendered text, aria-label o
 // 11. copy and theme
 const keys = [...source.matchAll(/\bt\('([a-zA-Z.]+)'/g)].map(m => m[1])
 const raw = keys.filter(k => mod.t(k, 1, 'x', 'y') === k)
-check(keys.length >= 12 && raw.length === 0, `every t() key resolves (${keys.length} keys${raw.length ? `, raw: ${raw}` : ''})`)
+check(keys.length >= 36 && raw.length === 0 && ['askInChat', 'askText', 'askFailed', 'collapse', 'expand', 'restoreFailed', 'noNotes'].every(k => keys.includes(`asterisk.${k}`)),
+  `23g. every t() key resolves, the new ones included (${keys.length} keys${raw.length ? `, raw: ${raw}` : ''})`)
 check(mod.t('asterisk.kind.tradeoff') === 'asterisk.kind.tradeoff' && mod.t('asterisk.point') === 'asterisk.point', 'the kind labels and the toast line are retired')
 const vars = [...css.matchAll(/var\(\s*(--[\w-]+)/g)].map(m => m[1])
 check(vars.length > 5 && vars.every(v => v.startsWith('--ui-') || v.startsWith('--font-')), `the strip's CSS names only --ui-* and --font-* tokens (${[...new Set(vars)]})`)
@@ -483,9 +654,12 @@ check(!literal, `the strip's CSS has no literal colour (${literal?.[0] ?? 'none'
 check(stub.calls.revealPane.length === 0, 'host.revealPane is never called')
 check(reactWarnings.length === 0, `React logged no warning (${reactWarnings.slice(0, 2).join(' | ')})`)
 
-// 13. status: one more registration per /status answer, on the same app, disposed afterwards
-function fakeCtx(answer) {
-  const c = { registered: [], listeners: new Set(), disposers: [], status: [], checks: [], i18n: 0 }
+// 13. status: one more registration per /status answer, on the same app, disposed afterwards.
+// /notes answers `notes` (an Error throws; a function is called and its promise awaited) and is
+// counted apart from /check and /dismiss.
+function fakeCtx(answer, { notes = { notes: [] }, pet = null } = {}) {
+  const c = { registered: [], listeners: new Set(), disposers: [], status: [], checks: [], notes: [], i18n: 0,
+    checkAnswer: { points: [], cost_usd: 0.01, cost_status: 'estimated', at: 9, title: null } }
   c.ctx = {
     register: x => { c.registered.push(x); return () => {} },
     i18n: { register: () => { c.i18n++ } },
@@ -497,10 +671,17 @@ function fakeCtx(answer) {
         if (answer instanceof Error) throw answer
         return answer
       }
+      if (p === '/notes') {
+        c.notes.push(opts)
+        const a = typeof notes === 'function' ? await notes() : notes
+        if (a instanceof Error) throw a
+        return a
+      }
       c.checks.push([p, opts])
-      return { points: [], cost_usd: 0.01, cost_status: 'estimated', at: 9, title: null }
+      return c.checkAnswer
     }
   }
+  if (pet) c.ctx.pet = pet
   return c
 }
 const quietly = async fn => {
@@ -531,24 +712,29 @@ const updateToast = list => list.length === 1 && list[0].id === 'asterisk-update
 let run = await statusRun({ ready: false, update_notice: true, old_install: false })
 check(run.c.checks.length === 0 && updateToast(run.toasts),
   `13b. ready: false -> no later /check post; update_notice: true -> one asterisk-update-hermes warning (${run.c.checks.length} posts, ${JSON.stringify(run.toasts)})`)
+check(run.c.notes.length === 0, `23e. ready: false -> /notes is never posted (${run.c.notes.length})`)
 run = await statusRun({ ready: false, update_notice: false, old_install: false })
 check(run.c.checks.length === 0 && run.toasts.length === 0, `13b. ready: false without update_notice -> no post and no notice (${JSON.stringify(run.toasts)})`)
 run = await statusRun({ ready: true, update_notice: false, old_install: true })
 check(run.c.checks.length === 0 && run.toasts.length === 1 && run.toasts[0].id === 'asterisk-old-install' && run.toasts[0].kind === 'warning'
   && run.toasts[0].title === 'Asterisk' && run.toasts[0].message === OLD,
   `13c. old_install: true -> no later /check post, one asterisk-old-install warning with its copy (${run.c.checks.length} posts, ${JSON.stringify(run.toasts)})`)
+check(run.c.notes.length === 0, `23e. old_install: true -> /notes is never posted (${run.c.notes.length})`)
 run = await statusRun({ ready: true, update_notice: false, old_install: false })
 check(run.c.checks.length === 1 && run.c.checks[0][0] === '/check' && run.toasts.length === 0,
   `13d. ready: true, old_install: false -> the reply is posted as today, no status toast (${run.c.checks.length} posts, ${run.toasts.length} toasts)`)
+check(same(run.c.notes, [{ method: 'POST', body: {} }]), `23e. ready: true -> /notes {} is posted once (${JSON.stringify(run.c.notes)})`)
 for (const [name, answer] of [['a failed /status', new Error('network down')], ['a malformed /status', { ready: 'yes' }], ['an empty /status', null]]) {
   run = await statusRun(answer)
   check(run.c.checks.length === 1 && run.toasts.length === 0 && run.c.status.length === 1,
     `13d. ${name} changes nothing: the reply is posted, no toast (${run.c.checks.length} posts, ${run.toasts.length} toasts)`)
+  check(same(run.c.notes, [{ method: 'POST', body: {} }]), `23e. ${name} still restores: /notes {} is posted once (${JSON.stringify(run.c.notes)})`)
 }
 
-// 13e. an old core's SDK: the same plugin.js against a stub without one of the area names
-for (const [name, opts] of [['SESSION_ROW_AREAS', { rows: false }], ['COMPOSER_AREAS', { composer: false }]]) {
-  const key = name.toLowerCase().replace('_', '-')
+// 13e/23f. an old core's SDK: the same plugin.js against a stub without one of the names it needs
+for (const [name, opts] of [['SESSION_ROW_AREAS', { rows: false }], ['COMPOSER_AREAS', { composer: false }], ['host.composer.insertText', { insert: false }]]) {
+  const key = name.toLowerCase().replaceAll('_', '-').replaceAll('.', '-')
+  const lock = opts.insert === false ? '23f. 13e. ' : '13e. '
   variant(`sdk-old-${key}.mjs`, `plugin-old-${key}.mjs`, opts)
   let oldStub, oldMod, err = null
   try {
@@ -557,8 +743,10 @@ for (const [name, opts] of [['SESSION_ROW_AREAS', { rows: false }], ['COMPOSER_A
   } catch (e) {
     err = e
   }
-  check(!err, `13e. without ${name} plugin.js still imports (${err?.message ?? 'linked'})`)
+  check(!err, `${lock}without ${name} plugin.js still imports (${err?.message ?? 'linked'})`)
   if (err) continue
+  check(opts.insert === false ? !('composer' in oldStub.host) && 'composer' in stub.host : typeof oldStub.host.composer?.insertText === 'function',
+    `${lock}the stub without ${name} ${opts.insert === false ? 'has no' : 'still has'} host.composer.insertText`)
   for (const notice of [true, false]) {
     const c = fakeCtx({ ready: false, update_notice: notice, old_install: false })
     const before = oldStub.calls.notify.length
@@ -574,9 +762,9 @@ for (const [name, opts] of [['SESSION_ROW_AREAS', { rows: false }], ['COMPOSER_A
     })
     const toasts = oldStub.calls.notify.slice(before)
     const subs = oldStub.host.state.focusedSessionId.subs.size + oldStub.host.state.focusedStoredSessionId.subs.size
-    check(!threw && c.registered.length === 0 && c.listeners.size === 0 && c.i18n === 0 && subs === 0
+    check(!threw && c.registered.length === 0 && c.listeners.size === 0 && c.i18n === 0 && subs === 0 && c.notes.length === 0
       && same(c.status, [{ method: 'POST', body: { desktop_ready: false } }]) && (notice ? updateToast(toasts) : toasts.length === 0),
-      `13e. without ${name}, update_notice ${notice}: register does not throw, registers nothing, adds no listener, posts /status { desktop_ready: false } once, ${notice ? 'one update warning' : 'no notice'} (${threw?.message ?? 'no throw'}; ${c.registered.length} contributions; ${JSON.stringify(c.status)}; ${JSON.stringify(toasts)})`)
+      `${lock}without ${name}, update_notice ${notice}: register does not throw, registers nothing, adds no listener, posts /status { desktop_ready: false } once and no /notes, ${notice ? 'one update warning' : 'no notice'} (${threw?.message ?? 'no throw'}; ${c.registered.length} contributions; ${JSON.stringify(c.status)}; ${JSON.stringify(toasts)})`)
   }
   let threw = null
   try {
@@ -585,8 +773,110 @@ for (const [name, opts] of [['SESSION_ROW_AREAS', { rows: false }], ['COMPOSER_A
     threw = e
   }
   await settle()
-  check(!threw, `13e. without ${name} and without ctx.rest, register does not throw (${threw?.message ?? 'no throw'})`)
+  check(!threw, `${lock}without ${name} and without ctx.rest, register does not throw (${threw?.message ?? 'no throw'})`)
 }
+
+// 23e. restart: a second registration (a fresh ctx) restores the backend's pending notes
+const KEYS14 = ['at', 'cost_status', 'cost_usd', 'model', 'points', 'session_id', 'title']
+const stored = (session_id, at, headline, sentence, title = null) => ({ session_id, at, title, model: 'fake-model-x', cost_usd: 0.0213, cost_status: 'estimated',
+  points: [{ kind: 'tradeoff', by: 'assistant', headline, text: sentence }] })
+const READY = { ready: true, update_notice: false, old_install: false }
+const E1 = stored('st-5', 7100.5, 'Restored first', 'The assistant reused the old token without saying it expires today.', 'Old chat')
+const E2 = stored('st-4', 7200.5, 'Restored second', 'The assistant skipped the slow tests without saying so.', 'Focused chat')
+const NO_HEAD = { ...stored('st-5', 7150.5, 'x', 'No headline here.'), points: [{ kind: 'cost', by: 'user', text: 'No headline here.' }] }
+/** Mounts a registration's strip and one row per chat through its own contributions. */
+function mountRun(c) {
+  const sc = c.registered.find(x => x.area === 'composer.top')
+  const dc = c.registered.find(x => x.area === 'sessionRow.trailing')
+  const st = mount(createElement(sc.render))
+  const RunRow = ({ sessionId }) => dc.data.render({ sessionId })
+  const rs = Object.fromEntries(ROWS.map(id => [id, mount(createElement(RunRow, { sessionId: id }))]))
+  return {
+    strip: st,
+    dots: () => Object.fromEntries(ROWS.map(id => [id, $$(rs[id].el, '[data-asterisk="dot"]').length])),
+    heads: () => $$(st.el, '[data-asterisk="entry"]').map(e => text($(e, '[data-asterisk="headline"]'))),
+    unmount: () => act(() => { st.root.unmount(); ROWS.forEach(id => rs[id].root.unmount()) }),
+    emit: (session_id, payload) => act(async () => {
+      for (const fn of c.listeners) fn({ type: 'message.complete', session_id, payload })
+      await settle()
+      await settle()
+    })
+  }
+}
+await focus('rt-4', 'st-4')
+const petR = { visible: true, said: [] }
+const r1 = fakeCtx(READY, { notes: { notes: [E2, NO_HEAD, E1] }, pet: { visible: { get: () => petR.visible }, say: (x, o) => { petR.said.push([x, o]) } } })
+let toastsR = stub.calls.notify.length
+await quietly(async () => {
+  mod.default.register(r1.ctx)
+  await settle()
+  await settle()
+})
+let m = mountRun(r1)
+let rs = $(m.strip.el, '[data-asterisk="strip"]')
+let re = $$(m.strip.el, '[data-asterisk="entry"]')
+check([E1, E2, NO_HEAD].every(e => same(Object.keys(e).sort(), KEYS14)) && same(r1.notes, [{ method: 'POST', body: {} }])
+  && same(m.heads(), ['Restored first', 'Restored second']) && same($$(rs, '[data-asterisk="num"]').map(text), ['1', '2']) && rs?.getAttribute('data-folded') === 'false'
+  && re[1]?.getAttribute('data-expanded') === 'true' && same(buttons(re[1]), ['Already knew', 'Ask in chat', 'Got it'])
+  && re[0]?.getAttribute('data-expanded') === 'false' && same(buttons(re[0]), ['Open']) && text($(re[0], '[data-asterisk="meta"]')) === 'Old chat · fake-model-x ~$0.02'
+  && same(m.dots(), { 'st-1': 0, 'st-2': 0, 'st-3': 0, 'st-4': 1, 'st-5': 1 }) && petR.said.length === 0,
+  `23e. restart: /notes entries in the backend's shape show numbered in at order, the focused one expanded with "Ask in chat", the right dots, no pet line, not folded (${m.heads()} | ${JSON.stringify(m.dots())} | ${petR.said.length} pet lines)`)
+check(stub.calls.notify.length === toastsR && !m.heads().includes('x'), `23e. an entry without a headline is skipped with no toast (${stub.calls.notify.length - toastsR} toasts)`)
+const insR = stub.calls.insert.length
+await click(button(re[1], 'Ask in chat'))
+check(stub.calls.insert.length === insR + 1 && same(stub.calls.insert.at(-1), ['st-4', `Asterisk: Restored second — ${E2.points[0].text}`, { mode: 'block' }])
+  && same(r1.checks.at(-1), ['/dismiss', { method: 'POST', body: { check_at: 7200.5, signal: 'asked' } }]) && same(m.heads(), ['Restored first']),
+  `23e. a restored note asks into its own chat and is dismissed with its stored at (${JSON.stringify(r1.checks.at(-1))})`)
+m.unmount()
+r1.disposers.forEach(fn => fn())
+
+// 23e. /notes answers late: a live note it also holds shows once; a note dismissed meanwhile is not restored
+let release
+const r2 = fakeCtx(READY, { notes: () => new Promise(r => { release = r }) })
+await quietly(async () => {
+  mod.default.register(r2.ctx)
+  await settle()
+  await settle()
+})
+m = mountRun(r2)
+const LIVE = 'The assistant kept the old schema without saying the migration was skipped.'
+r2.checkAnswer = { points: [point('Live and stored', LIVE)], cost_usd: 0.0213, cost_status: 'estimated', model: 'fake-model-x', at: 7300.5, title: 'Focused chat' }
+await m.emit('rt-4', frame('restart live', 300))
+r2.checkAnswer = { points: [point('Dismissed early', 'The assistant pushed to main without saying so.')], cost_usd: 0.0213, cost_status: 'estimated', model: 'fake-model-x', at: 7400.5, title: 'Focused chat' }
+await m.emit('rt-4', frame('restart dismissed', 310))
+const liveHeads = m.heads()
+await click(button($$(m.strip.el, '[data-asterisk="entry"]')[1], 'Got it'))
+const dismissedR = same(r2.checks.at(-1), ['/dismiss', { method: 'POST', body: { check_at: 7400.5, signal: 'read' } }])
+await click($(m.strip.el, '[data-asterisk="fold"]'))
+await act(async () => {
+  release({ notes: [stored('st-4', 7400.5, 'Dismissed early', 'The assistant pushed to main without saying so.', 'Focused chat'), stored('st-4', 7300.5, 'Live and stored', LIVE, 'Focused chat'), E1] })
+  await settle()
+  await settle()
+})
+rs = $(m.strip.el, '[data-asterisk="strip"]')
+check(rs?.getAttribute('data-folded') === 'true' && text($(rs, '[data-asterisk="label"]')) === 'Worth knowing · 2 notes',
+  `23e. restored notes do not unfold a folded strip (${rs?.getAttribute('data-folded')}, ${text($(rs, '[data-asterisk="label"]'))})`)
+await click($(m.strip.el, '[data-asterisk="fold"]'))
+check(same(liveHeads, ['Live and stored', 'Dismissed early']) && dismissedR && same(r2.notes, [{ method: 'POST', body: {} }])
+  && same(m.heads(), ['Restored first', 'Live and stored']) && same(m.dots(), { 'st-1': 0, 'st-2': 0, 'st-3': 0, 'st-4': 1, 'st-5': 1 }),
+  `23e. a late /notes: the live note it also holds shows once, the note dismissed while it was pending is not restored (${liveHeads} -> ${m.heads()})`)
+m.unmount()
+r2.disposers.forEach(fn => fn())
+
+// 23e. a failed /notes is one named error toast
+const r3 = fakeCtx(READY, { notes: new Error('network down') })
+toastsR = stub.calls.notify.length
+await quietly(async () => {
+  mod.default.register(r3.ctx)
+  await settle()
+  await settle()
+})
+const addedR = stub.calls.notify.slice(toastsR)
+check(addedR.length === 1 && addedR[0].id === 'asterisk-restore-error' && addedR[0].kind === 'error' && addedR[0].title === 'Asterisk'
+  && addedR[0].message === 'Could not restore earlier notes: network down' && r3.notes.length === 1,
+  `23e. a failed /notes is one asterisk-restore-error toast with its copy (${JSON.stringify(addedR)})`)
+r3.disposers.forEach(fn => fn())
+check(reactWarnings.length === 0, `React logged no warning in the restart runs (${reactWarnings.slice(0, 2).join(' | ')})`)
 
 // 1. dispose
 disposers.forEach(fn => fn())

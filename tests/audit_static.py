@@ -9,7 +9,8 @@ Rules:
   surface     the desktop half registers exactly two contributions — `area: COMPOSER_AREAS.top`
               and `area: SESSION_ROW_AREAS.trailing`, each once — and no pane, page or nav row; it
               reaches no network or storage of its own: its only doors are ctx.rest (its own
-              backend), host.notify and host.openSession
+              backend), host.notify, host.openSession and host.composer.insertText (never submit,
+              setDraft or getDraft: it puts text into an input and never sends)
   theme       every var(--name) in desktop/plugin.js is a token the app declares (`--name:` in the
               core's apps/desktop/src/styles.css; core from --core, HERMES_CORE or
               <HERMES_HOME>/hermes-agent). A missing styles.css is a problem, never a skip.
@@ -32,6 +33,10 @@ Rules:
               quoted read-only tool name, "display_kind" or "steer")
   eval        CI never runs the offline evaluation (it spends money): ci.yml names neither eval/
               nor compare_checkers
+  notes       the development-phase note store: plugin_api.py takes plugin_data_dir from the host once,
+              names NOTES_FILE = "notes.json" and a NOTES_MAX, keeps the ledger in state/asterisk/, and
+              the notes (plugin-data/asterisk/notes.json, "at most <NOTES_MAX> notes", "development
+              phase") and README.md ("development phase") say the note text is kept on disk
   installed   the desktop copy the app loads equals desktop/plugin.js (only when it exists here)
 """
 from __future__ import annotations
@@ -48,7 +53,7 @@ HERE = Path(__file__).resolve().parent
 # (the desktop loader itself skips strings and comments).
 LOADER = re.compile(r"""(?<![\w.$-])(from\s*|import\s*\(\s*|import\s+)(['"])([^'"]+)\2""")
 FORBIDDEN = (r"\bfetch\(", r"XMLHttpRequest", r"localStorage", r"ctx\.storage", r"\bpanes\b", r"PANES_AREA",
-             r"registerSettingsPage", r"revealPane", r"window\.hermesDesktop")
+             r"registerSettingsPage", r"revealPane", r"window\.hermesDesktop", r"\.submit\(", r"setDraft", r"getDraft")
 AREAS = ("COMPOSER_AREAS.top", "SESSION_ROW_AREAS.trailing")
 NAME = "asterisk"
 
@@ -76,7 +81,7 @@ def audit(root: Path, installed: Path | None, core: Path) -> list[str]:
             problems.append(f"loader: specifier {m.group(3)!r} — the loader would reject the whole plugin")
     for pattern in FORBIDDEN:
         if re.search(pattern, js):
-            problems.append(f"surface: {pattern} in desktop/plugin.js — the plugin's only doors are ctx.rest, host.notify and host.openSession")
+            problems.append(f"surface: {pattern} in desktop/plugin.js — the plugin's only doors are ctx.rest, host.notify, host.openSession and host.composer.insertText")
     areas = re.findall(r"\barea:\s*([^,}\s]+)", js)
     if sorted(areas) != sorted(AREAS) or len(re.findall(r"\bctx\.register\(", js)) != 2:
         problems.append(f"surface: the desktop half must register exactly {' and '.join(AREAS)}, each once (found {areas})")
@@ -154,6 +159,24 @@ def audit(root: Path, installed: Path | None, core: Path) -> list[str]:
     ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     if "eval/" in ci or "compare_checkers" in ci:
         problems.append("eval: ci.yml mentions the offline evaluation — it spends money and never runs in CI")
+
+    storage_import = "from plugins.plugin_storage import plugin_data_dir"
+    if api.count(storage_import) != 1:
+        problems.append(f"notes: plugin_api.py must take the note storage from the host once ({storage_import!r}, found {api.count(storage_import)})")
+    if not re.search(r'^NOTES_FILE = "notes.json"$', api, re.M):
+        problems.append('notes: plugin_api.py has no NOTES_FILE = "notes.json" — the docs name that file')
+    if 'return _home() / "state" / PLUGIN_ID / "ledger.jsonl"' not in api:
+        problems.append("notes: the ledger left state/asterisk/ledger.jsonl — only the notes live in plugin-data")
+    notes_max = re.search(r"^NOTES_MAX = (\d+)$", api, re.M)
+    if not notes_max:
+        problems.append("notes: plugin_api.py has no NOTES_MAX — the stored notes have no cap")
+    elif f"at most {int(notes_max.group(1))} notes" not in notes:
+        problems.append("notes: the notes do not state NOTES_MAX as the backend has it")
+    for needle in ("plugin-data/asterisk/notes.json", "development phase"):
+        if needle not in notes:
+            problems.append(f"notes: Docs/asterisk-notes.md does not say {needle!r} — the stored note text must be documented")
+    if "development phase" not in (root / "README.md").read_text(encoding="utf-8"):
+        problems.append("notes: README.md does not say the note text is kept on disk for the development phase")
 
     if installed and installed.exists() and installed.read_bytes() != (root / "desktop" / "plugin.js").read_bytes():
         problems.append(f"installed: {installed} differs from desktop/plugin.js — reinstall, the app loads that copy")

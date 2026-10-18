@@ -55,6 +55,11 @@ Seams:
                the receipt is None for a preflight transcript or a non-user cursor, compaction
                re-anchors or moves the cursor, and in-place compaction archives the active rows the
                default read returns
+  composer     host.composer.insertText(sessionId, text, { mode }) addresses one chat's input, defaults to
+               block mode, and block mode appends after the draft (what "Ask in chat" relies on: it never
+               sends and keeps the user's draft)
+  storage      plugins.plugin_storage.plugin_data_dir(name) is <hermes home>/plugin-data/<name>, and it is
+               the documented public plugin storage (where the development-phase notes are kept)
 """
 from __future__ import annotations
 
@@ -100,6 +105,10 @@ FILES = {
     "compressor": "agent/context_compressor.py",
     "compaction": "agent/turn_context_compaction.py",
     "compression": "agent/conversation_compression.py",
+    "composer_sdk": "apps/desktop/src/sdk/composer.ts",
+    "composer_draft": "apps/desktop/src/app/chat/composer/hooks/use-composer-draft.ts",
+    "plugin_storage": "plugins/plugin_storage.py",
+    "plugin_docs": "website/docs/developer-guide/plugins/index.md",
 }
 
 
@@ -211,6 +220,13 @@ SEAMS: dict[str, list[tuple[str, str]]] = {
                  ("compression", lit("agent._persist_user_message_idx = len(messages)")),
                  ("messages", lit('_ARCHIVE_ACTIVE_SQL = "UPDATE messages SET active = 0, compacted = 1 WHERE session_id = ? AND active = 1"')),
                  ("messages", lit('else " AND active = 1")'))],
+    "composer": [("composer_sdk", lit("insertText: (sessionId: null | string, text: string, opts?: { mode?: ComposerInsertMode }): Promise<boolean> => {")),
+                 ("composer_sdk", lit("return requestComposerInsertAcked(text, { mode: opts?.mode ?? 'block', target })")),
+                 ("sdk", r"^\s+composer: composerHost,$"),
+                 ("composer_draft", lit("paintDraft(`${base}${sep}${value}`)"))],
+    "storage": [("plugin_storage", r"^def plugin_data_dir\(name: str\) -> Path:$"),
+                ("plugin_storage", lit('root = get_hermes_home() / "plugin-data" / _validate_name(name)')),
+                ("plugin_docs", lit("from plugins.plugin_storage import plugin_data_dir, plugin_db"))],
 }
 
 

@@ -71,7 +71,9 @@ jobs:
             /agent/tool_result_classification.py \
             /agent/context_compressor.py \
             /agent/turn_context_compaction.py \
-            /agent/conversation_compression.py
+            /agent/conversation_compression.py \
+            /apps/desktop/src/sdk/composer.ts /apps/desktop/src/app/chat/composer/hooks/use-composer-draft.ts \
+            /plugins/plugin_storage.py /website/docs/developer-guide/plugins/index.md
           for i in 1 2 3; do git -C "$core" fetch -q --depth 1 origin "$CORE_SHA" && break; sleep $((i*20)); done
           git -C "$core" checkout -q FETCH_HEAD
           test -f "$core/agent/auxiliary_client.py" || { echo "core sources missing"; exit 1; }
