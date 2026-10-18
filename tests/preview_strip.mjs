@@ -10,8 +10,9 @@
  * render_check.mjs) inside the core desktop app's compiled CSS (apps/desktop/dist/assets/index-*.css,
  * inlined), with the preset's seeds set on <html> the way the app's applyTheme maps them (palette
  * read at run time from apps/shared/src/theme-presets.ts), and class="dark" + color-scheme for dark.
- * It shows: one note (focused chat), one note (another chat), three notes (one in the focused chat),
- * a sidebar of five rows with dots on three, and the three-note strip again under reduced motion.
+ * It shows, in order: "One note, focused chat (Ask in chat)", "One note, another chat", "Three notes,
+ * one in the focused chat", "Three notes, collapsed", "One note, collapsed" and "Three notes, reduced
+ * motion", beside a sidebar of five rows with dots on three.
  *
  * Core from HERMES_CORE or <HERMES_HOME>/hermes-agent. A missing core, a missing dist CSS (build the
  * desktop app first) or an unparseable palette exits 1 naming the path.
@@ -120,7 +121,8 @@ export const COMPOSER_AREAS = { top: 'composer.top' }
 export const SESSION_ROW_AREAS = { trailing: 'sessionRow.trailing' }
 export const host = {
   state: { focusedSessionId: atom('rt-1'), focusedStoredSessionId: atom('st-1') },
-  notify() {}, openSession: async () => {}
+  notify() {}, openSession: async () => {},
+  composer: { insertText: async () => true }
 }
 `)
 const href = f => `'${pathToFileURL(path.join(OUT, 'src', f)).href}'`
@@ -136,7 +138,7 @@ const registered = []
 const ctx = {
   register: c => registered.push(c),
   i18n: { register: b => { stub.i18n.bundle = b } },
-  onEvent() {}, onDispose() {}, rest: async () => ({})
+  onEvent() {}, onDispose() {}, rest: async p => (p === '/notes' ? { notes: [] } : {})
 }
 mod.default.register(ctx)
 // The watcher is private to register(); a fresh one per state gives each section its own notes.
@@ -148,12 +150,13 @@ const NOTES = [
   { id: 'n3', storedId: 'st-3', title: 'Release notes for the spring update', headline: 'Release tag pushed before the tests finished',
     text: 'The assistant pushed the release tag while the test run was still going.', by: 'assistant', cost: '~$0.06', checkAt: 3 }
 ]
-const watcherWith = list => {
+const watcherWith = (list, { folded = false } = {}) => {
   const w = mod.createWatcher(ctx, stub.host)
   w.notes.set(list)
+  w.folded.set(folded)
   return w
 }
-const strip = list => renderToStaticMarkup(createElement(mod.createStrip(watcherWith(list))))
+const strip = (list, opts) => renderToStaticMarkup(createElement(mod.createStrip(watcherWith(list, opts))))
 const reduced = list => {
   const saved = globalThis.window
   globalThis.window = { matchMedia: q => ({ matches: q.includes('reduce') }) }
@@ -190,9 +193,11 @@ body{margin:0;padding:24px;background:var(--ui-bg, var(--theme-background-seed))
 <body><div class="pv-grid">
 <aside><h2 class="pv-h">Sidebar (dots on three chats)</h2><div class="pv-side">${sidebar()}</div></aside>
 <main>
-${section('One note, focused chat', strip([NOTES[0]]))}
+${section('One note, focused chat (Ask in chat)', strip([NOTES[0]]))}
 ${section('One note, another chat', strip([NOTES[2]]))}
 ${section('Three notes, one in the focused chat', strip(NOTES))}
+${section('Three notes, collapsed', strip(NOTES, { folded: true }))}
+${section('One note, collapsed', strip([NOTES[0]], { folded: true }))}
 ${section('Three notes, reduced motion', reduced(NOTES))}
 </main></div></body></html>
 `

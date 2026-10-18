@@ -22,7 +22,9 @@ The core's modules are replaced by fakes that behave like the real ones where it
   - agent.tool_result_classification.tool_may_have_side_effect: true for every name outside its
     NO_EFFECT_TOOL_NAMES (read_file, search_files, web_search, web_extract); it can raise or be absent;
   - agent.context_compressor.user_originated_turn_view: a copy of a user row that is not a compaction
-    summary and has no display_kind or "steer", else None; it can raise or be absent.
+    summary and has no display_kind or "steer", else None; it can raise or be absent;
+  - plugins.plugin_storage.plugin_data_dir(name): <HERMES_HOME>/plugin-data/<name>/, created, a name
+    failing the core's ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ raises ValueError; it can raise or be absent.
 
 Locks:
   1. Input: a session id that is not a non-empty string (<= 200), or a receipt that is present but
@@ -67,8 +69,8 @@ Locks:
      the check's ledger time; the title is read (read-only store, get_session_title) only when there
      is a point; a title that cannot be read, or a blank one, is null and the point stays. A skip's
      response is exactly {points: [], skipped}.
- 14. POST /feedback {check_at}: a finite positive number (not a bool) appends exactly
-     {at, feedback: "already_knew", check_at}; anything else is a 400 with no line.
+ 14. POST /dismiss {check_at, signal: already_knew}: a finite positive number (not a bool) appends
+     exactly {at, feedback: "already_knew", check_at}; any other check_at is a 400 with no line.
  15. The name and the upgrade from 2.x (each part in a fresh profile home):
      (a) the auxiliary task is `asterisk` and the ledger is state/asterisk/ledger.jsonl;
      (b) with plugins/you-should-know/plugin.yaml present, /check is a 409 "old you-should-know plugin
@@ -109,6 +111,24 @@ Locks:
      oldest first, each redacted, unframed and cut to 500 with head and tail, the block at most
      2,000 (oldest dropped whole), framed once in <earlier> before the turn; the compressor absent
      -> no block and the check still runs; no earlier rows -> the 4.0.0 user message exactly.
+ 22. Notes on disk (development phase), each part in a fresh profile home:
+     (a) restart survival: a check with a point writes plugin-data/asterisk/notes.json holding exactly
+         one entry {session_id, at, title, model, cost_usd, cost_status, points} with the full headline
+         and text; plugin_api.py loaded a second time under another module name (same HERMES_HOME)
+         answers /notes with that entry unchanged; a check with no point and a skip write no entry;
+     (b) /dismiss {check_at, signal} for asked, read and already_knew appends exactly
+         {at, feedback: <signal>, check_at} and removes the entry from the file and from /notes; a bad
+         check_at (8 cases) or signal ("knew", "", None, 1, missing) is a 400 with its message, no line,
+         nothing removed; the router mounts POST /dismiss and POST /notes and no /feedback;
+     (c) an entry whose chat the store does not resolve is left out and removed from the file; invalid
+         entries are left out; a store that cannot open or a lookup that raises answers every entry and
+         the file keeps its bytes;
+     (d) 51 checks with a point leave the 50 newest entries, oldest first;
+     (e) storage absent or raising: /check with a point answers 200 with its ledger line, /notes is 503
+         "note storage unavailable", /dismiss answers {ok: true} with its ledger line; an unparseable or
+         non-list file answers []; a failing notes write changes neither the answer nor the ledger;
+     (f) no ledger holds a note's headline, text or title; the notes file is under plugin-data/asterisk/
+         and state/ holds no notes.json.
 """
 from __future__ import annotations
 
@@ -299,9 +319,38 @@ compressor = types.ModuleType("agent.context_compressor")
 compressor.user_originated_turn_view = user_originated_turn_view
 state = types.ModuleType("hermes_state")
 state.SessionDB = SessionDB
+
+
+class Storage:
+    """The fake host plugin storage: "present" or "raises" (absent is sys.modules[...] = None)."""
+    mode = "present"
+    calls: list = []
+
+
+PLUGIN_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
+
+
+def plugin_data_dir(name):
+    # Mirrors the core: <hermes home>/plugin-data/<name>/, created, the name validated first.
+    Storage.calls.append(name)
+    if Storage.mode == "raises":
+        raise RuntimeError("plugin storage failed")
+    if not isinstance(name, str) or not PLUGIN_NAME.match(name):
+        raise ValueError(f"invalid plugin name: {name!r}")
+    root = Path(os.environ["HERMES_HOME"]) / "plugin-data" / name
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+plugins_pkg = types.ModuleType("plugins")
+plugins_pkg.__path__ = []
+plugin_storage = types.ModuleType("plugins.plugin_storage")
+plugin_storage.plugin_data_dir = plugin_data_dir
+plugins_pkg.plugin_storage = plugin_storage
 sys.modules.update({"agent": agent, "agent.auxiliary_client": aux, "agent.usage_pricing": pricing,
                     "agent.redact": redact, "agent.tool_result_classification": classify,
-                    "agent.context_compressor": compressor, "hermes_state": state})
+                    "agent.context_compressor": compressor, "hermes_state": state,
+                    "plugins": plugins_pkg, "plugins.plugin_storage": plugin_storage})
 
 home = Path(tempfile.mkdtemp(prefix="asterisk-home-"))
 os.environ["HERMES_HOME"] = str(home)
@@ -858,20 +907,18 @@ check(len(Fake.calls) == calls + 1 and out["points"] == [] and out["model"] == "
       f"16d. a lookup that raises still calls the model and answers 200 (fail-open) ({len(Fake.calls) - calls} call)")
 Route.mode = "chosen"
 
-# 13. "Already knew": POST /feedback
+# 14. "Already knew": POST /dismiss {check_at, signal: already_knew}
 count = len(ledger())
-out = api.feedback_route({"check_at": 1000.0})
+out = api.dismiss_route({"check_at": 1000.0, "signal": "already_knew"})
 row = ledger()[-1]
 check(out == {"ok": True} and len(ledger()) == count + 1 and set(row) == {"at", "feedback", "check_at"}
       and row["feedback"] == "already_knew" and row["check_at"] == 1000.0 and isinstance(row["at"], float),
-      f"POST /feedback {{check_at: 1000.0}} appends exactly {{at, feedback: already_knew, check_at}} ({row})")
-bad = [{"check_at": "x"}, {"check_at": True}, {"check_at": 0}, {"check_at": -1}, {"check_at": float("nan")},
-       {"check_at": float("inf")}, {}, "not a dict"]
-codes = [status_of(api.feedback_route, b) for b in bad]
+      f"14. POST /dismiss {{check_at: 1000.0, signal: already_knew}} appends exactly {{at, feedback: already_knew, check_at}} ({row})")
+BAD_CHECK_AT = [{"check_at": "x"}, {"check_at": True}, {"check_at": 0}, {"check_at": -1}, {"check_at": float("nan")},
+                {"check_at": float("inf")}, {}, "not a dict"]
+codes = [status_of(api.dismiss_route, {**b, "signal": "already_knew"} if isinstance(b, dict) else b) for b in BAD_CHECK_AT]
 check(all(c == (400, "check_at must be a positive number") for c in codes) and len(ledger()) == count + 1,
-      f"check_at of \"x\", true, 0, -1, NaN, inf or missing -> 400, no line ({codes})")
-check(any(getattr(r, "path", "") == "/feedback" and "POST" in getattr(r, "methods", ()) for r in api.router.routes),
-      "the router mounts POST /feedback")
+      f"14. check_at of \"x\", true, 0, -1, NaN, inf or missing (or a body that is not an object) -> 400, no line ({codes})")
 
 # 12. the evaluation script's dry run, in-process, on the same fakes
 stub = home.parent / f"{home.name}-old-checker.py"
@@ -978,7 +1025,7 @@ code = status_of(api.check, "st-1", RECEIPT)
 check(code == (409, "old you-should-know plugin still installed") and len(Store.opened) == opened and len(Fake.calls) == calls
       and not new_ledger.exists(),
       f"15b. with plugins/you-should-know/plugin.yaml present /check is a 409, nothing read, sent, recorded or copied ({code})")
-api.feedback(1000.0)
+api.dismiss(1000.0, "already_knew")
 check(new_ledger.read_bytes().count(b"\n") == 1 and OLD_BYTES not in new_ledger.read_bytes(),
       "15b. a ledger line written while the 2.x package is present does not copy its ledger (it may still be writing)")
 new_ledger.unlink()
@@ -1009,11 +1056,11 @@ def failing_copy(*_a, **_k):
 
 
 api.shutil.copyfile = failing_copy
-api.feedback(1000.0)
+api.dismiss(1000.0, "already_knew")
 api.shutil.copyfile = real_copy
 failed_ledger = h3 / "state" / "asterisk" / "ledger.jsonl"
 first_try = failed_ledger.exists()
-api.feedback(1000.0)
+api.dismiss(1000.0, "already_knew")
 check(not first_try and failed_ledger.read_bytes().startswith(OLD_BYTES) and failed_ledger.read_bytes().count(b"\n") == 3,
       "15c. a failed copy appends nothing; the next record copies and appends")
 
@@ -1062,6 +1109,203 @@ if had_events:
     sys.modules[events_name] = saved_events
 else:
     del sys.modules[events_name]
+
+
+# 22. Notes survive a restart (development phase): plugin-data/asterisk/notes.json
+def notes_path(root: Path) -> Path:
+    return root / "plugin-data" / "asterisk" / "notes.json"
+
+
+def stored(root: Path) -> list:
+    path = notes_path(root)
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+
+
+def ledger_at(root: Path) -> list[dict]:
+    path = root / "state" / "asterisk" / "ledger.jsonl"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.exists() else []
+
+
+NOTE_HEADLINE = ("NOTE-HEADLINE-MARKER " + "h" * 80)[:80]
+NOTE_TEXT = ("NOTE-TEXT-MARKER " + "t" * 240)[:240]
+NOTE_POINT = json.dumps({"points": [{"kind": "tradeoff", "by": "assistant", "language": "English", "headline": NOTE_HEADLINE,
+                                     "text": NOTE_TEXT}]})
+NOTE_KEYS = {"session_id", "at", "title", "model", "cost_usd", "cost_status", "points"}
+note_homes: list[Path] = []
+
+
+def notes_home(tag: str) -> Path:
+    path = fresh_home(tag)
+    note_homes.append(path)
+    return path
+
+
+# 22a. restart survival through a second module load
+h5 = notes_home("notes")
+Storage.calls.clear()
+Fake.answer = NOTE_POINT
+out = api.check_route({"session_id": "st-1", "turn": RECEIPT})
+saved = stored(h5)
+entry = saved[0] if len(saved) == 1 else {}
+want_entry = {"session_id": "st-1", **{k: v for k, v in out.items() if k != "chars"}}
+check(len(saved) == 1 and set(entry) == NOTE_KEYS and entry == want_entry
+      and entry["points"] == [{"kind": "tradeoff", "by": "assistant", "headline": NOTE_HEADLINE, "text": NOTE_TEXT}]
+      and entry["title"] == "TITLE-MARKER deploy plan" and set(Storage.calls) == {"asterisk"},
+      f"22a. a check with a point writes plugin-data/asterisk/notes.json with one entry: the /check answer minus chars plus "
+      f"session_id, full headline and text ({sorted(entry)})")
+restart_spec = importlib.util.spec_from_file_location("asterisk_api_restart", API)
+api2 = importlib.util.module_from_spec(restart_spec)
+restart_spec.loader.exec_module(api2)
+restored = api2.notes_route({})
+check(api2 is not api and restored == {"notes": [entry]} and restored["notes"][0]["session_id"] == "st-1",
+      f"22a. a second load of plugin_api.py (a fresh process stand-in, same HERMES_HOME) answers /notes with that entry unchanged ({restored})")
+before = notes_path(h5).read_bytes()
+Fake.answer = '{"points": []}'
+none = api.check("st-1", RECEIPT)
+skipped = api.check("st-1", None)
+check(none["points"] == [] and skipped == {"points": [], "skipped": "no_receipt"} and notes_path(h5).read_bytes() == before,
+      "22a. a check with no point and a skip write no entry")
+
+# 22b. each signal removes the stored note and appends exactly {at, feedback: <signal>, check_at}
+Fake.answer = NOTE_POINT
+for i in range(4):
+    api.check("st-1", RECEIPT, 3001.0 + i)
+for i, signal in enumerate(api.SIGNALS):
+    at = 3001.0 + i
+    count = len(ledger_at(h5))
+    out = api.dismiss_route({"check_at": at, "signal": signal})
+    new = ledger_at(h5)[count:]
+    gone_file = all(e["at"] != at for e in stored(h5))
+    gone_notes = all(e["at"] != at for e in api2.notes_route({})["notes"])
+    ok_one = (out == {"ok": True} and len(new) == 1 and set(new[0]) == {"at", "feedback", "check_at"} and new[0]["feedback"] == signal
+              and new[0]["check_at"] == at and isinstance(new[0]["at"], float) and gone_file and gone_notes)
+    check(ok_one, f"22b. /dismiss {{check_at, signal: {signal}}} appends exactly {{at, feedback: {signal}, check_at}}; "
+                  f"the note is gone from the file and from /notes ({new})")
+check(api.SIGNALS == ("asked", "read", "already_knew"), f"22b. the signals are asked, read, already_knew ({api.SIGNALS})")
+count, before = len(ledger_at(h5)), notes_path(h5).read_bytes()
+codes = [status_of(api.dismiss_route, {**b, "signal": "read"} if isinstance(b, dict) else b) for b in BAD_CHECK_AT]
+check(all(c == (400, "check_at must be a positive number") for c in codes) and len(ledger_at(h5)) == count
+      and notes_path(h5).read_bytes() == before,
+      f"22b. a bad check_at (8 cases) -> 400 'check_at must be a positive number', no ledger line, nothing removed ({codes})")
+bad_signals = [{"check_at": 3004.0, "signal": s} for s in ("knew", "", None, 1)] + [{"check_at": 3004.0}]
+codes = [status_of(api.dismiss_route, b) for b in bad_signals]
+both = status_of(api.dismiss_route, {"check_at": 0, "signal": "knew"})
+check(all(c == (400, "signal must be asked, read or already_knew") for c in codes) and both == (400, "check_at must be a positive number")
+      and len(ledger_at(h5)) == count and notes_path(h5).read_bytes() == before and any(e["at"] == 3004.0 for e in stored(h5)),
+      f"22b. a bad signal (\"knew\", \"\", None, 1, missing) -> 400 'signal must be asked, read or already_knew' after the "
+      f"check_at check; no ledger line, nothing removed ({codes}, {both})")
+mounted = {(getattr(r, "path", ""), m) for r in api.router.routes for m in getattr(r, "methods", ())}
+check(("/dismiss", "POST") in mounted and ("/notes", "POST") in mounted and not any(p == "/feedback" for p, _ in mounted)
+      and not hasattr(api, "feedback") and not hasattr(api, "feedback_route"),
+      f"22b. the router mounts POST /dismiss and POST /notes, and no /feedback ({sorted(mounted)})")
+
+# 22c. a note whose chat no longer exists
+h6 = notes_home("gone")
+kept_entry = {**entry, "at": 4001.0}
+gone_entry = {**entry, "at": 4002.0, "session_id": "st-deleted"}
+invalid = [{**entry, "at": 0}, {**entry, "at": "4003"}, {**entry, "session_id": ""}, {**entry, "session_id": None}, "x"]
+notes_path(h6).parent.mkdir(parents=True, exist_ok=True)
+notes_path(h6).write_text(json.dumps([kept_entry, gone_entry]), encoding="utf-8")
+opened = len(Store.opened)
+out = api.notes_route({})
+check(out == {"notes": [kept_entry]} and stored(h6) == [kept_entry] and len(Store.opened) == opened + 1
+      and Store.opened[-1] == {"db_path": None, "read_only": True},
+      f"22c. an entry whose chat the store does not resolve is left out and removed from the file; the store opened read-only once ({out})")
+notes_path(h6).write_text(json.dumps([kept_entry] + invalid), encoding="utf-8")
+before = notes_path(h6).read_bytes()
+out = api.notes_route({})
+check(out == {"notes": [kept_entry]} and notes_path(h6).read_bytes() == before,
+      f"22c. an entry without a positive-number at or a non-empty session_id is left out; nothing gone, the file is not rewritten ({out})")
+notes_path(h6).write_text(json.dumps([kept_entry, gone_entry]), encoding="utf-8")
+before = notes_path(h6).read_bytes()
+Store.raise_on_open = True
+out = api.notes_route({})
+Store.raise_on_open = False
+check(out == {"notes": [kept_entry, gone_entry]} and notes_path(h6).read_bytes() == before,
+      f"22c. the store failing to open: every entry is answered and the file keeps its bytes ({out})")
+real_resolve = SessionDB.resolve_session_id
+
+
+def raising_resolve(self, session_id_or_prefix):
+    raise RuntimeError("database is locked")
+
+
+SessionDB.resolve_session_id = raising_resolve
+out = api.notes_route({})
+SessionDB.resolve_session_id = real_resolve
+check(out == {"notes": [kept_entry, gone_entry]} and notes_path(h6).read_bytes() == before,
+      f"22c. a lookup that raises: every entry is answered and the file keeps its bytes ({out})")
+
+# 22d. cap: the 50 newest, oldest first
+h7 = notes_home("cap")
+Fake.answer = NOTE_POINT
+for i in range(51):
+    api.check("st-1", RECEIPT, 5001.0 + i)
+ats = [e["at"] for e in stored(h7)]
+check(api.NOTES_MAX == 50 and ats == [5002.0 + i for i in range(50)] and [e["at"] for e in api.notes_route({})["notes"]] == ats,
+      f"22d. 51 checks with a point leave the 50 newest entries, oldest first ({len(ats)}, {ats[:1]}..{ats[-1:]})")
+
+# 22e. storage unavailable: the point, the ledger and the dismissal still work
+h8 = notes_home("nostorage")
+for name, setup in (("absent", lambda: sys.modules.__setitem__("plugins.plugin_storage", None)),
+                    ("raising", lambda: setattr(Storage, "mode", "raises"))):
+    Fake.answer = NOTE_POINT
+    setup()
+    try:
+        count = len(ledger_at(h8))
+        out = api.check_route({"session_id": "st-1", "turn": RECEIPT})
+        line = ledger_at(h8)[count:]
+        notes_code = status_of(api.notes_route, {})
+        dismissed = api.dismiss_route({"check_at": out["at"], "signal": "read"})
+        after = ledger_at(h8)[count + 1:]
+    finally:
+        sys.modules["plugins.plugin_storage"] = plugin_storage
+        Storage.mode = "present"
+    check(out["points"] and out["points"][0]["headline"] == NOTE_HEADLINE and len(line) == 1 and line[0]["at"] == out["at"]
+          and line[0]["points"] == 1 and not notes_path(h8).exists(),
+          f"22e. storage {name}: /check with a point answers 200 with the point and writes its ledger line ({out.get('points')})")
+    check(notes_code == (503, "note storage unavailable"), f"22e. storage {name}: /notes -> 503 'note storage unavailable' ({notes_code})")
+    check(dismissed == {"ok": True} and len(after) == 1 and after[0]["feedback"] == "read" and after[0]["check_at"] == out["at"],
+          f"22e. storage {name}: /dismiss -> {{ok: true}} with its ledger line ({after})")
+try:
+    plugin_data_dir("../asterisk")
+    refused = False
+except ValueError:
+    refused = True
+check(refused and not (h8 / "plugin-data" / "..").resolve().joinpath("asterisk").exists(),
+      "22e. the fake storage refuses a name failing the core's pattern (as the core does)")
+for label, body in (("an unparseable", "{not json"), ("a non-list", '{"notes": []}')):
+    notes_path(h8).parent.mkdir(parents=True, exist_ok=True)
+    notes_path(h8).write_text(body, encoding="utf-8")
+    out = api.notes_route({})
+    check(out == {"notes": []}, f"22e. {label} notes file -> /notes answers [] ({out})")
+api.check("st-1", RECEIPT, 6001.0)
+check([e["at"] for e in stored(h8)] == [6001.0], "22e. the next write replaces a file that is not a list")
+notes_path(h8).unlink()
+notes_path(h8).mkdir()
+count = len(ledger_at(h8))
+code = status_of(api.check, "st-1", RECEIPT)
+out = api.check("st-1", RECEIPT, 6002.0) if code == (None, None) else {}
+check(code == (None, None) and out.get("points") and ledger_at(h8)[-1]["at"] == 6002.0 and len(ledger_at(h8)) == count + 2
+      and notes_path(h8).is_dir(),
+      f"22e. a notes write that fails (the path is a folder) never changes the answer or the ledger line ({code})")
+dismissed = api.dismiss_route({"check_at": 6002.0, "signal": "asked"})
+check(dismissed == {"ok": True} and ledger_at(h8)[-1]["feedback"] == "asked",
+      "22e. a dismissal whose note cannot be removed still answers {ok: true} after its ledger line")
+Fake.answer = '{"points": []}'
+
+# 22f. separation: the ledger keeps no text; the notes file is never under state/
+leaks, misplaced = [], []
+for root in [home, *note_homes]:
+    path = root / "state" / "asterisk" / "ledger.jsonl"
+    raw = path.read_text(encoding="utf-8") if path.exists() else ""
+    leaks += [f"{root.name}:{m}" for m in ("NOTE-HEADLINE-MARKER", "NOTE-TEXT-MARKER", "TITLE-MARKER", "HEADLINE-MARKER") if m in raw]
+    misplaced += [str(p) for p in (root / "state").rglob("notes.json*")]
+check(not leaks, f"22f. no ledger holds a stored note's headline, text or title markers ({leaks})")
+check(not misplaced and not (home / "state" / "asterisk" / "notes.json").exists()
+      and all(notes_path(r).exists() for r in (home, h5, h6, h7))
+      and notes_path(h5).parent == h5 / "plugin-data" / "asterisk",
+      f"22f. the notes file is under plugin-data/asterisk/ and state/ holds no notes.json ({misplaced})")
 os.environ["HERMES_HOME"] = str(home)
 
 print(f"\n{failures} FAILED" if failures else "\nALL PASSED")
