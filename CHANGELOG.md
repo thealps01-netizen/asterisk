@@ -1,5 +1,33 @@
 # Changelog
 
+## 4.1.0 (2026-10-18)
+
+- Cost first: far more turns are checked now, so the cost can rise about five times. On one user's
+  history, about 75 checks per active day instead of 14 (about $4 a day instead of $0.74 at 5.3 cents
+  a check on `claude-opus-5-5`); a cheaper model on the Asterisk row lowers it. What a short-reply
+  check costs is not measured yet.
+- A turn is now checked when the assistant used a tool that can change something (wrote a file, ran a
+  command, ...), even with a short reply, or when the reply is long (3,000+ characters, as before).
+  Which tools only read is Hermes' own list (`tool_may_have_side_effect`); a terminal command always
+  counts. The backend decides; the desktop half sends every finished reply of a chat you opened.
+- Four new kinds of point: a request the reply did not answer (`unanswered`), work the reply claims
+  but the turn did not do (`overclaim`), something you said not to do that was done (`constraint`),
+  and something you did not ask for (`overreach`). `result` also covers a definite value taken from
+  an empty, cut, stale, malformed or failed tool result. When several apply, one is chosen by a fixed
+  order: irreversible and security first, then unanswered, overclaim and constraint, then result and
+  cost, then tradeoff, assumption and overreach. How many notes and how much noise the new kinds bring
+  is not measured yet.
+- The check also reads your last five earlier messages in the chat (yours only, never the assistant's
+  replies or tool results; redacted; at most 500 characters each and 2,000 together), so a rule or a
+  request you gave before can be seen. Ledger lines gain `earlier_chars` (a length, no text).
+- Fixed: "Could not check a long reply: … turn ids missing or malformed" after a compaction during
+  the turn. A turn Hermes cannot prove (no receipt, a missing user or final row id, more than 500
+  rows, rows archived by compaction, a first row that is not your own message) is now skipped
+  silently and recorded as a ledger line `{at, skipped}` with the reason and no text. A malformed
+  request is still an error.
+- The error notice now says "Could not check a reply". No change to the strip's look or to how the
+  model is chosen. The desktop half and the backend must come from the same release.
+
 ## 4.0.0 (2026-10-17)
 
 - The model is yours to choose. Asterisk registers its own auxiliary task: an "Asterisk" row in

@@ -20,10 +20,16 @@ Rules:
               __init__.py registers that auxiliary task (`register_auxiliary_task("asterisk"`)
   model       the model is the user's choice: plugin_api.py assigns no MODEL / PROVIDER and passes no
               provider= / model= inside its call_llm( call, plugin.js never says Opus, and the notes
-              name `claude-opus-5-5` (the only model the cost was measured on); the backend and the
-              desktop half share the length floor the notes state
+              name `claude-opus-5-5` (the only model the cost was measured on); the desktop half has
+              no length floor (no MIN_CHARS, no text.length test: the backend alone decides) and the
+              notes state the backend's floor
   caps        the notes state the total and the per-tool-result caps (MAX_TURN_CHARS,
-              MAX_TOOL_RESULT_CHARS) as the backend has them
+              MAX_TOOL_RESULT_CHARS) and the earlier-message caps (MAX_EARLIER_MESSAGES,
+              MAX_EARLIER_MESSAGE_CHARS, MAX_EARLIER_CHARS) as the backend has them
+  delegate    plugin_api.py asks the core which tools may change something
+              (tool_may_have_side_effect) and which user rows are the user's own
+              (user_originated_turn_view), each imported once, and holds no copy of either rule (no
+              quoted read-only tool name, "display_kind" or "steer")
   eval        CI never runs the offline evaluation (it spends money): ci.yml names neither eval/
               nor compare_checkers
   installed   the desktop copy the app loads equals desktop/plugin.js (only when it exists here)
@@ -106,8 +112,7 @@ def audit(root: Path, installed: Path | None, core: Path) -> list[str]:
         problems.append('name: __init__.py does not register the auxiliary task "asterisk" (its model row in Settings → Models)')
 
     notes = (root / "Docs" / "asterisk-notes.md").read_text(encoding="utf-8")
-    floor = re.search(r"^MIN_CHARS = (\d+)", api, re.M)
-    js_floor = re.search(r"^export const MIN_CHARS = (\d+)", js, re.M)
+    floor = re.search(r"^MIN_CHARS = (\d+)$", api, re.M)
     if re.search(r"^(?:MODEL|PROVIDER)\s*=", api, re.M):
         problems.append("model: plugin_api.py names a MODEL or PROVIDER again — the model is the user's choice (Settings → Models)")
     call = re.search(r"(?<![\w.])call_llm\((.*?)\)", api, re.S)
@@ -117,8 +122,10 @@ def audit(root: Path, installed: Path | None, core: Path) -> list[str]:
         problems.append("model: desktop/plugin.js says Opus — the strip names the model that answered")
     if "`claude-opus-5-5`" not in notes:
         problems.append("model: the notes do not name `claude-opus-5-5`, the only model the cost was measured on")
-    if not floor or not js_floor or floor.group(1) != js_floor.group(1):
-        problems.append("model: the backend and the desktop half disagree on the length floor")
+    if "MIN_CHARS" in js or re.search(r"\btext\.length\s*>=?\s*\d", js):
+        problems.append("model: the desktop half filters on reply length again — the backend alone decides which turns are checked")
+    if not floor:
+        problems.append("model: plugin_api.py has no MIN_CHARS — the backend's length floor is gone")
     elif f"{int(floor.group(1)):,}" not in notes:
         problems.append("model: the notes do not state the length floor the code uses")
 
@@ -126,6 +133,23 @@ def audit(root: Path, installed: Path | None, core: Path) -> list[str]:
         cap = re.search(rf"^{name} = (\d+)$", api, re.M)
         if not cap or not re.search(rf"(?<![\d,]){int(cap.group(1)):,}(?![\d,])", notes):
             problems.append(f"caps: the notes do not state {name} as the backend has it")
+    earlier = {n: re.search(rf"^{n} = (\d+)$", api, re.M) for n in ("MAX_EARLIER_MESSAGES", "MAX_EARLIER_MESSAGE_CHARS", "MAX_EARLIER_CHARS")}
+    if not all(earlier.values()):
+        problems.append("caps: plugin_api.py lacks MAX_EARLIER_MESSAGES, MAX_EARLIER_MESSAGE_CHARS or MAX_EARLIER_CHARS")
+    else:
+        n, each, total = (int(m.group(1)) for m in earlier.values())
+        if f"the last {n} user messages before the turn, each at most {each:,} characters, at most {total:,} together" not in notes:
+            problems.append("caps: the notes do not state the earlier-message caps as the backend has them")
+
+    for line in ("from agent.tool_result_classification import tool_may_have_side_effect",
+                 "from agent.context_compressor import user_originated_turn_view"):
+        if api.count(line) != 1:
+            problems.append(f"delegate: plugin_api.py must ask the core once ({line!r}, found {api.count(line)})")
+    for copied in ('"read_file"', '"search_files"', '"web_search"', '"web_extract"', '"session_search"', '"skill_view"',
+                   '"skills_list"', '"vision_analyze"', '"display_kind"', '"steer"'):
+        if copied in api:
+            problems.append(f"delegate: plugin_api.py holds {copied} — ask the core (tool_may_have_side_effect, "
+                            "user_originated_turn_view) instead of copying its rule")
 
     ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     if "eval/" in ci or "compare_checkers" in ci:

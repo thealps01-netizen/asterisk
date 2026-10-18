@@ -1,19 +1,24 @@
 # Asterisk
 
-Asterisk is a Hermes plugin. After a long reply (3,000+ characters) in a chat you opened in the desktop app, a
-second model (the model you choose for it) rereads that whole turn — your message, the assistant's
-tool calls and their
-results, and the reply — and, only when there is one, names the one thing the reply did not plainly
+Asterisk is a Hermes plugin. After a turn in a chat you opened in the desktop app where the assistant
+used a tool that can change something (wrote a file, ran a command, ...), or wrote a long reply
+(3,000+ characters), a second model (the model you choose for it) rereads that whole turn — your
+message, the assistant's tool calls and their results, and the reply, with your last earlier messages
+in the chat as context — and, only when there is one, names the one thing the reply did not plainly
 tell you: an unstated tradeoff, a result that may be off, a silent assumption, an understated
-irreversible step, a security risk or a cost, and who decided it (the assistant or you). It shows as a
-headline above the input that stays until you dismiss it. Most turns have nothing to flag; then
-nothing is shown.
+irreversible step, a security risk, a cost, a request left unanswered, work claimed but not done,
+something you said not to do that was done, or something you did not ask for, and who decided it
+(the assistant or you). It shows as a headline above the input that stays until you dismiss it. Most
+turns have nothing to flag; then nothing is shown.
 
 Each check costs about 5 cents on `claude-opus-5-5`: measured on 14 real turns from one user
 (2026-10-17), the mean was about $0.05 and the range about $0.02–0.08, against about $0.019 for 1.0.0
-on the same turns. At ~15 checks a day that is about $22 a month. Other models are not measured: the
-cost and the quality of the points on them are unknown. Each check is recorded (without any text) in
-a ledger. See `Docs/asterisk-notes.md` for how it works, the cost and the review.
+on the same turns. On one user's history (30 days, 4 active days, 403 turns, counts only) the 4.0.0
+rule checked about 14 turns per active day (~$0.74) and this rule about 75 (~$4.0 at 5.3 cents a
+check); what a short-reply check costs is not measured. Other models are not measured: the cost and
+the quality of the points on them are unknown. Each check, and each skipped turn, is recorded
+(without any text) in a ledger. See `Docs/asterisk-notes.md` for how it works, the cost and the
+review.
 
 ## Layout
 
@@ -84,7 +89,7 @@ desktop app (`apps/desktop/dist`), starts no app, and is not a gate.
 ## Offline evaluation
 
 `eval/compare_checkers.py` runs the 1.0.0 checker (the reply alone) and this one (the whole turn) on
-the latest long-reply turns of sessions you name, and writes a markdown with both answers, their cost
+the latest turns Asterisk would check of sessions you name, and writes a markdown with both answers, their cost
 and a "useful / noise" box per point for you to tick.
 
 - A live run spends money: one Opus call (1.0.0) and one call on the model chosen for Asterisk per

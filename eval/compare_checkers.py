@@ -1,5 +1,6 @@
 """Asterisk — offline evaluation: the 1.0.0 checker (reply only, up to three points) against the
-turn-aware checker (the whole turn, one point or none), on real past turns of chosen sessions.
+turn-aware checker (the whole turn, one point or none), on real past turns Asterisk would check, of
+chosen sessions.
 
 Run from the repository root with any Python that can start Hermes (the Hermes venv interpreter does):
   python eval/compare_checkers.py --session <stored id> [--session ...] [--turns 3] [--core <checkout>]
@@ -80,7 +81,7 @@ def old_source(tmp: Path) -> Path:
 
 
 def eligible_turns(new, session_id: str, count: int) -> list[dict]:
-    """The latest `count` turns of a session whose final reply is long enough, each as a receipt."""
+    """The latest `count` turns of a session that Asterisk would check (the backend's needs_check), each as a receipt."""
     from hermes_state import SessionDB
     db = SessionDB(read_only=True)
     try:
@@ -105,7 +106,7 @@ def eligible_turns(new, session_id: str, count: int) -> list[dict]:
             continue
         kept = seg[:finals[-1] + 1]
         reply = new._text(kept[-1].get("content"))
-        if len(reply) >= new.MIN_CHARS:
+        if new.needs_check(kept):
             ids = [r["id"] for r in kept]
             out.append({"session": session_id, "reply": reply,
                         "receipt": {"row_ids": ids, "complete": True, "user_row_id": ids[0],
@@ -138,16 +139,17 @@ def ask(module, messages, new: bool = False):
 
 
 def compare(new, old, turn: dict) -> dict:
-    rows = new.read_turn(turn["session"], turn["receipt"])
+    rows, earlier = new.read_turn(turn["session"], turn["receipt"])
     turn_text, stats = new.build_turn(rows)
+    earlier_text = new.build_earlier(earlier)
     old_reply = old._clip(new._redact(turn["reply"]))
     old_messages = [{"role": "system", "content": old.SYSTEM_PROMPT},
                     {"role": "user", "content": f"The reply:\n\n{old_reply}"}]
     ids = turn["receipt"]["row_ids"]
     return {"session": turn["session"], "rows": f"{ids[0]}-{ids[-1]}", "old_chars": len(old_reply),
-            "new_turn_chars": stats["turn_chars"], "tool_results": stats["tool_results"],
-            "truncated": stats["truncated"], "est_tokens": round(stats["turn_chars"] / CHARS_PER_TOKEN),
-            "old": ask(old, old_messages), "new": ask(new, new.build_messages(turn_text), new=True)}
+            "new_turn_chars": stats["turn_chars"], "earlier_chars": len(earlier_text), "tool_results": stats["tool_results"],
+            "truncated": stats["truncated"], "est_tokens": round((stats["turn_chars"] + len(earlier_text)) / CHARS_PER_TOKEN),
+            "old": ask(old, old_messages), "new": ask(new, new.build_messages(turn_text, earlier_text), new=True)}
 
 
 def point_lines(points) -> list[str]:
@@ -169,6 +171,7 @@ def markdown(results: list[dict]) -> str:
     for r in results:
         out += [f"## {r['session']} rows {r['rows']}", "",
                 f"Sizes: old reply {r['old_chars']} chars; new turn {r['new_turn_chars']} chars, "
+                f"earlier messages {r['earlier_chars']} chars, "
                 f"{r['tool_results']} tool results, truncated {r['truncated']}.", "",
                 f"### Old (1.0.0) — {r['old'][1]}", *point_lines(r["old"][0]), "",
                 f"### New (turn-aware) — {r['new'][1]}", *point_lines(r["new"][0]), ""]
@@ -206,11 +209,12 @@ def main(argv: list[str] | None = None) -> int:
         for turn in eligible_turns(new, session_id, args.turns):
             try:
                 results.append(compare(new, old, turn))
-            except (new.TurnUnreadable, new.RedactionUnavailable) as exc:
+            except (new.TurnUnreadable, new.TurnSkipped, new.RedactionUnavailable) as exc:
                 print(f"session={session_id} skipped: {type(exc).__name__} ({exc})", file=sys.stderr)
     for r in results:
         print(f"session={r['session']} rows={r['rows']} old_chars={r['old_chars']} new_turn_chars={r['new_turn_chars']} "
-              f"tool_results={r['tool_results']} truncated={r['truncated']} est_tokens={r['est_tokens']} (estimate: chars / 2.5)")
+              f"earlier_chars={r['earlier_chars']} tool_results={r['tool_results']} truncated={r['truncated']} "
+              f"est_tokens={r['est_tokens']} (estimate: chars / 2.5)")
     print(f"{len(results)} turn(s)")
     if args.dry_run:
         return 0

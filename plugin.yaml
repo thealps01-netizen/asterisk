@@ -1,13 +1,16 @@
 name: asterisk
 label: Asterisk
-version: 4.0.0
+version: 4.1.0
 description: >-
-  Asterisk — after a long reply (3,000+ characters) in a chat you opened, a second model
-  (the model you choose for it in Settings → Models) rereads that turn — your message, the
-  assistant's tool calls and results, and the reply —
+  Asterisk — after a turn in a chat you opened where the assistant used a tool that can change
+  something, or wrote a long reply (3,000+ characters), a second model (the model you choose for it
+  in Settings → Models) rereads that turn — your message, the assistant's tool calls and results,
+  and the reply, with your last earlier messages as context —
   and, only when there is one, names the one thing the reply did not plainly tell you: an unstated
   tradeoff, a result that may be off, a silent assumption, an understated irreversible step, a
-  security risk or a cost, and who decided it. Nothing to flag, nothing shown. Keeps a cost ledger
-  without any text.
+  security risk, a cost, a request left unanswered, work claimed but not done, something you said
+  not to do, or something you did not ask for, and who decided it. Nothing to flag, nothing shown.
+  About 75 checks per active day on one user's history (~$4 at 5.3 cents a check), against 14 for
+  4.0.0. Keeps a cost ledger without any text.
 author: Muhammed Enes Alpler
 kind: standalone
