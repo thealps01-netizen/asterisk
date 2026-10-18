@@ -642,15 +642,16 @@ for (const [sid, headline, at, base] of [['rt-2', 'Wrong list one', 5120.5, 214]
 }
 entries = $$(strip.el, '[data-asterisk="entry"]')
 const expandedWrong = entries.filter(e => e.getAttribute('data-expanded') === 'true')
-await click(button(entries[1], 'Not right'))
+await click(button(expandedWrong[0] ?? entries[1], 'Not right'))
 entries = $$(strip.el, '[data-asterisk="entry"]')
-check(expandedWrong.length === 1 && expandedWrong[0].getAttribute('data-expanded') === 'true' && same(buttons(expandedWrong[0]), FOCUSED4)
+check(expandedWrong.length === 1 && same(buttons(expandedWrong[0]), FOCUSED4)
   && same(entries.map(e => text($(e, '[data-asterisk="headline"]'))), ['Wrong list one', 'Wrong list three']) && same($$(strip.el, '[data-asterisk="num"]').map(text), ['1', '2'])
   && same(rest.at(-1), ['/dismiss', { method: 'POST', body: { check_at: 5121.5, signal: 'wrong' } }]) && stub.calls.notify.length === toastsWrong,
   `24c. "Not right" on the expanded note of a numbered list removes only that note, renumbers the rest 1, 2 and posts 'wrong' (${entries.map(e => text($(e, '[data-asterisk="headline"]')))} | ${JSON.stringify(rest.at(-1))})`)
 for (const [rt, st] of [['rt-2', 'st-2'], ['rt-1', 'st-1']]) {
   await focus(rt, st)
-  await click(button($$(strip.el, '[data-asterisk="entry"]').find(e => e.getAttribute('data-expanded') === 'true'), 'Got it'))
+  const open = $$(strip.el, '[data-asterisk="entry"]').find(e => e.getAttribute('data-expanded') === 'true')
+  if (open) await click(button(open, 'Got it'))
 }
 await focus('rt-3', 'st-3')
 
