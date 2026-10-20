@@ -381,7 +381,12 @@ otherwise check every reply twice and pay twice.
 
 ## Old Hermes
 
-Asterisk needs Hermes v0.21.6 or later, decided by seams, not by a version string. The desktop half
+Asterisk needs Hermes v0.21.6 or later, decided by seams, not by a version string. Which releases
+are tested: CI's `core-versions` job runs `tests/contract_core.py` and `tests/core_smoke.py` (the
+backend on the real core, with the core's own dependencies and a local fake model) on every stable
+release from the README's minimum on, and on the pin; `audit_static.py` (`versions`) fails when the
+README's minimum is not in that matrix. Add each new stable release to the matrix. The desktop half
+is checked against each release's SDK source only. The desktop half
 imports the SDK as a namespace (an old SDK lacks names, and a named import of a missing one would fail
 the whole module) and checks `COMPOSER_AREAS.top`, `SESSION_ROW_AREAS.trailing`, `atom`, `useValue`,
 `usePluginI18n` and `host` (`state.focusedSessionId`, `state.focusedStoredSessionId`, `notify`,

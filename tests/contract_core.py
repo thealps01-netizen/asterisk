@@ -5,6 +5,10 @@ Run: python contract_core.py [--core <hermes-agent checkout>]      (exit 0 = the
 
 The fakes in check_api.py and render_check.mjs stand in for these; this is what keeps them honest.
 
+Rules name what the plugin calls (names, parameters, defaults); a type annotation may be spelled
+either way (`str = None` or `str | None = None`, `List`/`list`, `Dict`/`dict`), since that changes
+nothing at run time. tests/core_smoke.py runs the backend on a real core to back this up.
+
 Seams:
   frame        message.complete carries status (with "complete") and response_reused
   llm          agent.auxiliary_client.call_llm(task, messages, max_tokens, timeout, route_info)
@@ -14,9 +18,12 @@ Seams:
   pricing      estimate_usage_cost and the cost statuses actual / estimated / included / unknown
   notify       a warning notice stays until dismissed (no auto-dismiss), like an error
   host         host.notify, host.openSession, host.state.focusedSessionId / focusedStoredSessionId
-  ctx          ctx.rest, ctx.onEvent, ctx.onDispose, ctx.pet with say and visible
+  ctx          ctx.rest, ctx.onEvent, ctx.onDispose
+  pet          optional: a core whose ctx has no pet member at all passes (plugin.js reads it with ?.;
+               the selftest says SKIP there); a core that has one, in any shape, keeps say and visible
   receipt      message.complete carries persisted_turn (PersistedTurn: row_ids, complete, user_row_id,
-               final_assistant_row_id), and prompt_turn fills it with the committed rows of the turn
+               final_assistant_row_id), and prompt_turn (or agent/persisted_turn_receipt.py, where v0.22.1
+               moved it) fills it with the committed rows of the turn
   store        hermes_state.SessionDB(db_path, read_only), close(), resolve_session_id,
                resolve_resume_session_id and get_messages(..., limit, latest, include_ancestors)
   redact       agent.redact.redact_sensitive_text(text, *, force, ..., redact_url_credentials)
@@ -80,7 +87,7 @@ FILES = {
     "notify": "apps/desktop/src/store/notifications.ts",
     "sdk": "apps/desktop/src/sdk/index.ts",
     "ctx": "apps/desktop/src/contrib/plugin.ts",
-    "turn": "tui_gateway/prompt_turn.py",
+    "turn": ("tui_gateway/prompt_turn.py", "agent/persisted_turn_receipt.py"),
     "state": "hermes_state.py",
     "messages": "hermes_state_messages.py",
     "sessions": "hermes_state_sessions.py",
@@ -127,10 +134,10 @@ SEAMS: dict[str, list[tuple[str, str]]] = {
     "frame": [("events", r'event\("message\.complete", MessageCompletePayload'),
               ("events", r"^\s+response_reused: bool \| None"),
               ("events", r'^\s+complete = "complete"')],
-    "llm": [("aux", r"^def call_llm\(\s*task: str \| None = None, \*, provider: str \| None = None, model: str \| None = None"),
-            ("aux", r"^\s+api_key: str \| None = None, main_runtime: Optional\[dict\[str, Any\]\] = None, messages: list,"),
-            ("aux", r"^\s+temperature: Optional\[float\] = None, max_tokens: int \| None = None,"),
-            ("aux", r"^\s+timeout: float \| None = None"),
+    "llm": [("aux", r"^def call_llm\(\s*task: str(?: \| None)? = None, \*, provider: str(?: \| None)? = None, model: str(?: \| None)? = None"),
+            ("aux", r"^\s+api_key: str(?: \| None)? = None, main_runtime: Optional\[[dD]ict\[str, Any\]\] = None, messages: list,"),
+            ("aux", r"^\s+temperature: Optional\[float\] = None, max_tokens: int(?: \| None)? = None,"),
+            ("aux", r"^\s+timeout: float(?: \| None)? = None"),
             ("aux", r"^def extract_content_or_reasoning\(response")],
     "usage": [("pricing", r'^_CHAT_USAGE_SHAPE = \(\s*\(\("prompt_tokens",\),.*\n\s*\(\("completion_tokens",\),'),
               ("pricing", r'^_ANTHROPIC_USAGE_SHAPE = \(\s*\(\("input_tokens",\),\), \(\("output_tokens",\),\)'),
@@ -144,9 +151,9 @@ SEAMS: dict[str, list[tuple[str, str]]] = {
              ("sdk", r"^\s+focusedStoredSessionId: readonlyAtom")],
     "ctx": [("ctx", r"^\s+rest: <T>\(path: string, opts\?: PluginRestOptions\) => Promise<T>$"),
             ("ctx", r"^\s+onEvent: \(type: string, listener: GatewayEventListener\) => \(\) => void$"),
-            ("ctx", r"^\s+onDispose: \(fn: \(\) => void\) => void$"),
+            ("ctx", r"^\s+onDispose: \(fn: \(\) => void\) => void$")],
+    "pet": [("ctx", r"^\s+say: \(text: string, options\?: PetSayOptions\) => \(\) => void$"),
             ("ctx", r"^\s+pet: PluginPet$"),
-            ("ctx", r"^\s+say: \(text: string, options\?: PetSayOptions\) => \(\) => void$"),
             ("ctx", r"^\s+visible: ReadableAtom<boolean>$")],
     "receipt": [("events", r"^class PersistedTurn\(Payload\):"),
                 ("events", r"^\s+row_ids: list\[int\]$"),
@@ -156,11 +163,11 @@ SEAMS: dict[str, list[tuple[str, str]]] = {
                 ("events", r"^\s+persisted_turn: PersistedTurn \| None = None$"),
                 ("turn", r'^\s+payload\["persisted_turn"\] = receipt$'),
                 ("turn", r'^\s+receipt\["final_assistant_row_id"\] = final_id$')],
-    "store": [("state", r"^\s+def __init__\(self, db_path: Path \| None = None, read_only: bool = False\):$"),
+    "store": [("state", r"^\s+def __init__\(self, db_path: Path(?: \| None)? = None, read_only: bool = False\):$"),
               ("state", r"^\s+def close\(self\):$"),
               ("messages", r"^\s+def get_messages\(self, session_id: str, include_inactive: bool = False, include_compacted: bool = False,\n"
                            r"\s+limit: Optional\[int\] = None, offset: int = 0, latest: bool = False,\n"
-                           r"\s+after_id: Optional\[int\] = None, include_ancestors: bool = False\) -> list\[dict\[str, Any\]\]:"),
+                           r"\s+after_id: Optional\[int\] = None, include_ancestors: bool = False\) -> [lL]ist\[[dD]ict\[str, Any\]\]:"),
               ("messages", r"^\s+def resolve_resume_session_id\(self, session_id: str\) -> str:$"),
               ("sessions", r"^\s+def resolve_session_id\(self, session_id_or_prefix: str\) -> Optional\[str\]:$")],
     "redact": [("redact", r"^def redact_sensitive_text\(text: str, \*, force: bool = False,"),
@@ -221,7 +228,7 @@ SEAMS: dict[str, list[tuple[str, str]]] = {
                  ("turn", lit("return None  # preflight returned the old transcript, not a new turn")),
                  ("turn", lit('or messages[start].get("role") != "user"):')),
                  ("turn", lit('receipt["user_row_id"] = user_row_id')),
-                 ("turn", lit('and last.get("content") == raw and (final_id := committed_id(last)) is not None):')),
+                 ("turn", lit('and last.get("content") == raw and (final_id := ') + r"committed(?:_row)?_id" + lit("(last)) is not None):")),
                  ("compaction", lit("agent._persist_user_message_idx = idx")),
                  ("compression", lit("agent._persist_user_message_idx = len(messages)")),
                  ("messages", lit('_ARCHIVE_ACTIVE_SQL = "UPDATE messages SET active = 0, compacted = 1 WHERE session_id = ? AND active = 1"')),
@@ -243,6 +250,25 @@ SEAMS: dict[str, list[tuple[str, str]]] = {
 }
 
 
+OPTIONAL = {"pet": ("ctx", r"^\s+pet\??:")}
+
+
+def paths(key: str) -> tuple[str, ...]:
+    rel = FILES[key]
+    return rel if isinstance(rel, tuple) else (rel,)
+
+
+def all_paths() -> list[str]:
+    return [rel for key in FILES for rel in paths(key)]
+
+
+def absent_ok(seam: str, texts: dict) -> bool:
+    """An optional seam may be missing only when the core has no such member at all; a member that is
+    there under any shape is held to the seam's rules."""
+    key, probe = OPTIONAL[seam]
+    return key in texts and not re.search(probe, texts[key], re.M)
+
+
 def default_core() -> Path:
     if os.environ.get("HERMES_CORE"):
         return Path(os.environ["HERMES_CORE"])
@@ -253,16 +279,18 @@ def default_core() -> Path:
 
 def run(core: Path) -> list[str]:
     texts, broken = {}, []
-    for key, rel in FILES.items():
-        path = core / rel
-        if not path.exists():
-            broken.append(f"missing file {rel}")
+    for key in FILES:
+        found = [core / rel for rel in paths(key) if (core / rel).exists()]
+        if not found:
+            broken.append(f"missing file {' or '.join(paths(key))}")
             continue
-        texts[key] = path.read_text(encoding="utf-8")
+        texts[key] = "\n".join(path.read_text(encoding="utf-8") for path in found)
     for seam, rules in SEAMS.items():
-        for key, pattern in rules:
-            if key in texts and not re.search(pattern, texts[key], re.M):
-                broken.append(f"{seam}: {FILES[key]} no longer matches /{pattern[:70]}/")
+        misses = [(key, pattern) for key, pattern in rules if key in texts and not re.search(pattern, texts[key], re.M)]
+        if seam in OPTIONAL and absent_ok(seam, texts):
+            continue
+        for key, pattern in misses:
+            broken.append(f"{seam}: {' or '.join(paths(key))} no longer matches /{pattern[:70]}/")
     return broken
 
 
@@ -273,14 +301,22 @@ def selftest(core: Path) -> int:
         key, pattern = rules[0]
         with tempfile.TemporaryDirectory() as tmp:
             copy = Path(tmp)
-            for rel in FILES.values():
-                (copy / rel).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(core / rel, copy / rel)
-            target = copy / FILES[key]
-            text = target.read_text(encoding="utf-8")
-            broken, n = re.subn(pattern, "/* removed */", text, count=1, flags=re.M)
-            target.write_text(broken, encoding="utf-8")
+            for rel in all_paths():
+                if (core / rel).exists():
+                    (copy / rel).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(core / rel, copy / rel)
+            n = 0
+            for rel in paths(key):
+                target = copy / rel
+                if n or not target.exists():
+                    continue
+                broken, n = re.subn(pattern, "/* removed */", target.read_text(encoding="utf-8"), count=1, flags=re.M)
+                target.write_text(broken, encoding="utf-8")
             caught = n == 1 and any(b.startswith(f"{seam}:") for b in run(copy))
+        if seam in OPTIONAL and n == 0 and absent_ok(seam, {k: "\n".join(
+                (core / rel).read_text(encoding="utf-8") for rel in paths(k) if (core / rel).exists()) for k in FILES}):
+            print(f"SKIP  selftest: {seam} is optional and absent in this core")
+            continue
         print(f"{'PASS' if caught else 'FAIL'}  selftest: breaking {seam} is caught")
         misses += 0 if caught else 1
     return misses
