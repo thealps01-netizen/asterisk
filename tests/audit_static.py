@@ -38,6 +38,8 @@ Rules:
               nor compare_checkers
   sparse      every core file tests/contract_core.py reads (FILES) is in ci.yml's sparse checkout of
               the core; a local run reads the full core, so a missing path only fails in CI
+  versions    the minimum Hermes version README.md states is a core in ci.yml's core-versions matrix,
+              and that job runs core_smoke.py and its selftest (a stated minimum is a tested one)
   notes       the development-phase note store: plugin_api.py takes plugin_data_dir from the host once,
               names NOTES_FILE = "notes.json" and a NOTES_MAX, keeps the ledger in state/asterisk/, and
               the notes (plugin-data/asterisk/notes.json, "at most <NOTES_MAX> notes", "development
@@ -175,8 +177,15 @@ def audit(root: Path, installed: Path | None, core: Path) -> list[str]:
     spec.loader.exec_module(contract)
     sparse = re.search(r"sparse-checkout set(.*?)\n\s*for i in", ci, re.S)
     listed = set(re.findall(r"(?:^|\s)/([\w./-]+)", sparse.group(1))) if sparse else set()
-    for rel in sorted(set(contract.FILES.values()) - listed):
+    for rel in sorted(set(contract.all_paths()) - listed):
         problems.append(f"sparse: contract_core.py reads {rel}, but ci.yml's sparse checkout of the core does not fetch it")
+    stated = re.search(r"Needs Hermes (v\d+\.\d+\.\d+) or later", (root / "README.md").read_text(encoding="utf-8"))
+    if not stated:
+        problems.append("versions: README.md does not state the minimum Hermes version (\"Needs Hermes vX.Y.Z or later\")")
+    elif f"name: {stated.group(1)}, sha: " not in ci:
+        problems.append(f"versions: README.md's minimum {stated.group(1)} is not a core in ci.yml's core-versions matrix")
+    if 'python core_smoke.py --core "$CORE" && python core_smoke.py --core "$CORE" --selftest' not in ci:
+        problems.append("versions: ci.yml does not run core_smoke.py (and its selftest) on the real cores")
 
     storage_import = "from plugins.plugin_storage import plugin_data_dir"
     if api.count(storage_import) != 1:

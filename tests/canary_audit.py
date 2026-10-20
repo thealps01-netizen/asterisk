@@ -168,6 +168,10 @@ MUTATIONS = [
      "        run: python canary_audit.py && python ../eval/compare_checkers.py --help"),
     ("CI's sparse core checkout misses a file the contract reads", CI,
      " /apps/desktop/src/contrib/settings-pages.ts", ""),
+    ("README's minimum Hermes is not a tested core", "README.md", "Needs Hermes v0.21.6 or later",
+     "Needs Hermes v0.21.5 or later"),
+    ("CI stops running the backend on real cores", CI,
+     'python core_smoke.py --core "$CORE" && python core_smoke.py --core "$CORE" --selftest', "python core_smoke.py --help"),
     # the upgrade from 2.x
     ("the old-install guard in check() is removed", API,
      '    if _old_install():\n        raise HTTPException(status_code=409, detail=f"old {OLD_ID} plugin still installed")\n', ""),

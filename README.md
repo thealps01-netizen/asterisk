@@ -72,7 +72,9 @@ Settings → Plugins → Asterisk. Changes are saved for the active profile and 
 
 ## Install
 
-Needs Hermes v0.21.6 or later (its `message.complete` frames carry the turn's row ids). In the Hermes
+Needs Hermes v0.21.6 or later (its `message.complete` frames carry the turn's row ids). CI runs the
+backend on every stable Hermes release from v0.21.6 on with a fake model (`tests/core_smoke.py`); the
+desktop half is checked against each release's SDK source, not run inside each release's app. In the Hermes
 app, no terminal:
 
 1. Open Capabilities → Plugins and click **Install from Git**.
@@ -115,12 +117,17 @@ half is rendered with real React and jsdom, pinned to the core desktop app's ver
 | Backend | `python check_api.py` |
 | Static rules | `python audit_static.py` |
 | Core contract | `python contract_core.py` and `python contract_core.py --selftest` |
+| Backend on a real core | `python core_smoke.py --core <checkout>` and the same with `--selftest` |
 | Canary | `python canary_audit.py` |
 
 `check_api.py` needs FastAPI (the Hermes venv has it) and calls no model. `contract_core.py` and
 `audit_static.py` read a Hermes checkout (`--core`, `HERMES_CORE`, or `<HERMES_HOME>/hermes-agent`).
+`core_smoke.py` imports that checkout, so its interpreter needs the core's dependencies (Python
+3.14; `uv pip install -r <checkout>/pyproject.toml "fastapi==0.115.*"` in a separate venv, not the
+Hermes runtime's own); it answers with a local fake model and calls no real one.
 CI runs every gate on Ubuntu and Windows against a pinned core revision (`CORE_SHA` in
-`.github/workflows/ci.yml`).
+`.github/workflows/ci.yml`), and the contract and `core_smoke.py` on every stable release from the
+stated minimum (the `core-versions` job).
 
 For a reviewer's eyes, `node preview_strip.mjs` writes light and dark previews of the strip
 (`tests/.out/preview/{nous,everforest}-{light,dark}.html`) and of the settings page at 720px and
