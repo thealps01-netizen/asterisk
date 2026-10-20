@@ -36,6 +36,8 @@ Rules:
               quoted read-only tool name, "display_kind" or "steer")
   eval        CI never runs the offline evaluation (it spends money): ci.yml names neither eval/
               nor compare_checkers
+  sparse      every core file tests/contract_core.py reads (FILES) is in ci.yml's sparse checkout of
+              the core; a local run reads the full core, so a missing path only fails in CI
   notes       the development-phase note store: plugin_api.py takes plugin_data_dir from the host once,
               names NOTES_FILE = "notes.json" and a NOTES_MAX, keeps the ledger in state/asterisk/, and
               the notes (plugin-data/asterisk/notes.json, "at most <NOTES_MAX> notes", "development
@@ -45,6 +47,7 @@ Rules:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -167,6 +170,13 @@ def audit(root: Path, installed: Path | None, core: Path) -> list[str]:
     ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     if "eval/" in ci or "compare_checkers" in ci:
         problems.append("eval: ci.yml mentions the offline evaluation — it spends money and never runs in CI")
+    spec = importlib.util.spec_from_file_location("contract_core_files", root / "tests" / "contract_core.py")
+    contract = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(contract)
+    sparse = re.search(r"sparse-checkout set(.*?)\n\s*for i in", ci, re.S)
+    listed = set(re.findall(r"(?:^|\s)/([\w./-]+)", sparse.group(1))) if sparse else set()
+    for rel in sorted(set(contract.FILES.values()) - listed):
+        problems.append(f"sparse: contract_core.py reads {rel}, but ci.yml's sparse checkout of the core does not fetch it")
 
     storage_import = "from plugins.plugin_storage import plugin_data_dir"
     if api.count(storage_import) != 1:

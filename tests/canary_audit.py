@@ -166,6 +166,8 @@ MUTATIONS = [
     ("the total cap changes without the notes", API, "MAX_TURN_CHARS = 32000", "MAX_TURN_CHARS = 30000"),
     ("CI runs the paid evaluation", CI, "        run: python canary_audit.py",
      "        run: python canary_audit.py && python ../eval/compare_checkers.py --help"),
+    ("CI's sparse core checkout misses a file the contract reads", CI,
+     " /apps/desktop/src/contrib/settings-pages.ts", ""),
     # the upgrade from 2.x
     ("the old-install guard in check() is removed", API,
      '    if _old_install():\n        raise HTTPException(status_code=409, detail=f"old {OLD_ID} plugin still installed")\n', ""),
