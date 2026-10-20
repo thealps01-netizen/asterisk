@@ -146,10 +146,12 @@ def compare(new, old, turn: dict) -> dict:
     old_messages = [{"role": "system", "content": old.SYSTEM_PROMPT},
                     {"role": "user", "content": f"The reply:\n\n{old_reply}"}]
     ids = turn["receipt"]["row_ids"]
+    settings = new._settings()
     return {"session": turn["session"], "rows": f"{ids[0]}-{ids[-1]}", "old_chars": len(old_reply),
+            "tone": settings["tone"], "kinds": len(settings["enabled"]),
             "new_turn_chars": stats["turn_chars"], "earlier_chars": len(earlier_text), "tool_results": stats["tool_results"],
             "truncated": stats["truncated"], "est_tokens": round((stats["turn_chars"] + len(earlier_text)) / CHARS_PER_TOKEN),
-            "old": ask(old, old_messages), "new": ask(new, new.build_messages(turn_text, earlier_text), new=True)}
+            "old": ask(old, old_messages), "new": ask(new, new.build_messages(turn_text, earlier_text, settings), new=True)}
 
 
 def point_lines(points) -> list[str]:
@@ -169,7 +171,7 @@ def markdown(results: list[dict]) -> str:
     out = [f"# Asterisk — checker comparison ({time.strftime('%Y-%m-%d %H:%M')})", "",
            "Conversation-derived text: keep this file under HERMES_HOME, never commit it.", ""]
     for r in results:
-        out += [f"## {r['session']} rows {r['rows']}", "",
+        out += [f"## {r['session']} rows {r['rows']} tone={r['tone']} kinds={r['kinds']}", "",
                 f"Sizes: old reply {r['old_chars']} chars; new turn {r['new_turn_chars']} chars, "
                 f"earlier messages {r['earlier_chars']} chars, "
                 f"{r['tool_results']} tool results, truncated {r['truncated']}.", "",
@@ -214,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
     for r in results:
         print(f"session={r['session']} rows={r['rows']} old_chars={r['old_chars']} new_turn_chars={r['new_turn_chars']} "
               f"earlier_chars={r['earlier_chars']} tool_results={r['tool_results']} truncated={r['truncated']} "
-              f"est_tokens={r['est_tokens']} (estimate: chars / 2.5)")
+              f"tone={r['tone']} kinds={r['kinds']} est_tokens={r['est_tokens']} (estimate: chars / 2.5)")
     print(f"{len(results)} turn(s)")
     if args.dry_run:
         return 0

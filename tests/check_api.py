@@ -569,14 +569,14 @@ check(Fake.priced[-1:] == [("routed-model-x", "anthropic")] and out["model"] == 
 check(Store.title_reads == [] and len(Store.opened) == 1, f"nothing to flag: the title is not read, the store opened once ({Store.title_reads})")
 row = ledger()[-1] if ledger() else {}
 want = {"at", "chars", "provider", "model", "input_tokens", "output_tokens", "cost_usd", "cost_status", "seconds", "points", "kinds", "by",
-        "turn_chars", "tool_results", "truncated", "turn_complete", "earlier_chars"}
+        "turn_chars", "tool_results", "truncated", "turn_complete", "earlier_chars", "tone", "enabled"}
 earlier_block = user[len(EARLIER_HEAD):user.index("\n\nThe turn, oldest first:")]
 turn_part = user[user.index("<turn>\n"):user.rindex("\n\n" + api.LANGUAGE_RULE)]
 check(set(row) == want and row["points"] == 0 and row["kinds"] == [] and row["by"] is None and row["tool_results"] == 2
       and row["truncated"] is False and row["turn_complete"] is True and row["turn_chars"] == len(turn_part)
-      and row["earlier_chars"] == len(earlier_block)
+      and row["earlier_chars"] == len(earlier_block) and row["tone"] == "plain" and row["enabled"] == list(api.KINDS)
       and row["chars"] == len(REPLY) and row["input_tokens"] == 2500 and row["cost_usd"] == 0.02,
-      f"24h. the ledger line has 4.0.0's fields plus earlier_chars; zero points is points: 0 ({row})")
+      f"24h. the ledger line has 4.0.0's fields plus earlier_chars, tone and enabled; zero points is points: 0 ({row})")
 check(row.get("provider") == "anthropic" and row.get("model") == "routed-model-x",
       f"16e. the ledger names the provider and model that answered, not the chosen one ({row.get('provider')}, {row.get('model')})")
 
@@ -956,6 +956,7 @@ check("session=st-1 rows=10-16 old_chars=" in printed and "new_turn_chars=" in p
       and "estimate" in printed and "1 turn(s)" in printed, f"eval --dry-run prints the sizes per turn ({printed.strip()!r})")
 check(re.search(r"new_turn_chars=\d+ earlier_chars=\d+ ", printed) is not None,
       "24i. eval --dry-run prints earlier_chars= after new_turn_chars=")
+check(" tone=plain kinds=10 " in printed, f"25p. eval --dry-run names the saved tone and the number of kinds on ({printed.strip()!r})")
 stub.write_text('SYSTEM_PROMPT = "old prompt"\n\n\ndef _clip(text):\n    return text\n\n\n'
                 'def _parse(raw):\n    import json\n    return json.loads(raw)["points"]\n\n\n'
                 'def _call_llm(messages):\n    raise AssertionError("the old model was called")\n', encoding="utf-8")
@@ -1307,6 +1308,302 @@ check(not misplaced and not (home / "state" / "asterisk" / "notes.json").exists(
       and all(notes_path(r).exists() for r in (home, h5, h6, h7))
       and notes_path(h5).parent == h5 / "plugin-data" / "asterisk",
       f"22f. the notes file is under plugin-data/asterisk/ and state/ holds no notes.json ({misplaced})")
+# 25. Settings: tone, enabled kinds, the report and its suggestions (POST /report, /settings, /keep)
+FRIENDLY_LINES = """- Tone: friendly. Write the headline and the sentence the way a helpful colleague would say it: warm,
+  everyday words, no jargon, no exclamation marks. The tone changes only the wording, never whether there
+  is a point, which point or its kind. An irreversible or security point is always written plainly.
+"""
+PLAYFUL_LINES = """- Tone: playful. Write the headline and the sentence with a light, witty touch: a gentle turn of
+  phrase, never sarcasm and never a joke at the user's expense; the facts stay exact. The tone changes only
+  the wording, never whether there is a point, which point or its kind. An irreversible or security point
+  is always written plainly, with no wit.
+"""
+HEADLINE_END = "  the final reply's language.\n"
+FOUR_OFF = ("cost", "tradeoff", "assumption", "overreach")
+
+
+def without_bullet(text: str, kind: str) -> str:
+    return re.sub(rf"^- {kind}: .*\n(?:  .*\n)*", "", text, count=1, flags=re.M)
+
+
+four_off = APPROVED_PROMPT
+for k in FOUR_OFF:
+    four_off = without_bullet(four_off, k)
+four_off = four_off.replace("1. irreversible, security\n2. unanswered, overclaim, constraint\n3. result, cost\n4. tradeoff, assumption, overreach\n",
+                            "1. irreversible, security\n2. unanswered, overclaim, constraint\n3. result\n")
+four_off = four_off.replace("<one of: tradeoff, result, assumption, irreversible, security, cost, unanswered, overclaim, constraint, overreach>",
+                            "<one of: result, irreversible, security, unanswered, overclaim, constraint>")
+check(api.system_prompt("friendly", api.KINDS) == APPROVED_PROMPT.replace(HEADLINE_END, HEADLINE_END + FRIENDLY_LINES, 1)
+      and api.system_prompt("playful", api.KINDS) == APPROVED_PROMPT.replace(HEADLINE_END, HEADLINE_END + PLAYFUL_LINES, 1),
+      "25a. friendly and playful insert their tone lines after the headline rule, the rest byte-identical to 4.3.0")
+check(api.system_prompt("plain", [k for k in api.KINDS if k not in FOUR_OFF]) == four_off,
+      "25a. four kinds off: their bullets, group entries and template ids are gone; the empty group is dropped and the rest renumbered")
+check(api.system_prompt("plain", api.KINDS) == api.SYSTEM_PROMPT == APPROVED_PROMPT and api.TONES == ("plain", "friendly", "playful")
+      and api.LOCKED == ("irreversible", "security") and api.SETTINGS_FILE == "settings.json",
+      "25a. system_prompt('plain', KINDS) == SYSTEM_PROMPT == APPROVED_PROMPT; TONES, LOCKED and SETTINGS_FILE as specified")
+
+
+def settings_path(root: Path) -> Path:
+    return root / "plugin-data" / "asterisk" / "settings.json"
+
+
+def save_raw(root: Path, data) -> None:
+    settings_path(root).parent.mkdir(parents=True, exist_ok=True)
+    settings_path(root).write_text(data if isinstance(data, str) else json.dumps(data), encoding="utf-8")
+
+
+def seed(root: Path, lines: list) -> None:
+    path = root / "state" / "asterisk" / "ledger.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join((x if isinstance(x, str) else json.dumps(x)) + "\n" for x in lines), encoding="utf-8")
+
+
+ALL_BUT_COST = [k for k in api.KINDS if k != "cost"]
+DISABLED_POINT = json.dumps({"points": [{"kind": "cost", "by": "assistant", "language": "English", "headline": NOTE_HEADLINE,
+                                         "text": NOTE_TEXT}]})
+
+# 25b. a check with saved settings: the prompt follows them, the ledger names them
+h9 = fresh_home("settings")
+save_raw(h9, {"tone": "playful", "enabled": ALL_BUT_COST, "snoozed": {}})
+Fake.answer = '{"points": []}'
+api.check("st-1", RECEIPT, 7001.0)
+system = Fake.calls[-1]["messages"][0]["content"]
+line = ledger_at(h9)[-1]
+check("cost" not in system and PLAYFUL_LINES in system and system == api.system_prompt("playful", ALL_BUT_COST),
+      "25b. with cost off and tone playful saved, the system message never names cost and carries the playful lines")
+check(line.get("tone") == "playful" and line.get("enabled") == ALL_BUT_COST and line["at"] == 7001.0
+      and not any(m in json.dumps(line) for m in ("NOTE-HEADLINE-MARKER", "NOTE-TEXT-MARKER", "TITLE-MARKER")),
+      f"25b. the check line records tone playful and the enabled kinds without cost, and no text ({line})")
+Fake.answer = "not json at all"
+code = status_of(api.check, "st-1", RECEIPT, 7002.0)
+line = ledger_at(h9)[-1]
+check(code == (502, "model answer unreadable") and line.get("error") == "unreadable" and line.get("tone") == "playful"
+      and line.get("enabled") == ALL_BUT_COST,
+      f"25b. the unreadable line also carries tone and enabled ({code}, {line})")
+
+# 25c. a point of a disabled kind is filtered: 200, no note, recorded; an unknown id is still a 502
+Fake.answer = DISABLED_POINT
+notes_before = stored(h9)
+out = api.check_route({"session_id": "st-1", "turn": RECEIPT})
+line = ledger_at(h9)[-1]
+check(out["points"] == [] and stored(h9) == notes_before and line.get("filtered") == ["cost"] and line.get("kinds") == []
+      and line.get("points") == 0,
+      f"25c. a cost point with cost off: points [], nothing in notes.json, the check line has filtered ['cost'] and kinds [] ({line})")
+Fake.answer = json.dumps({"points": [{"kind": "deadline", "by": "assistant", "text": "x"}]})
+code = status_of(api.check, "st-1", RECEIPT, 7003.0)
+check(code == (502, "model answer unreadable"), f"25c. a kind outside KINDS is still unreadable, 502 ({code})")
+Fake.answer = NOTE_POINT
+out = api.check("st-1", RECEIPT, 7004.0)
+check(out["points"] and out["points"][0]["kind"] == "tradeoff" and "filtered" not in ledger_at(h9)[-1],
+      "25c. an enabled kind's point is kept as before and its line has no filtered key")
+
+# 25d. /settings validation: exact 400s, the file untouched; the locked kinds cannot be turned off
+before = settings_path(h9).read_bytes()
+bad = [({"tone": "loud", "enabled": list(api.KINDS)}, (400, "tone must be plain, friendly or playful")),
+       ({"enabled": list(api.KINDS)}, (400, "tone must be plain, friendly or playful")),
+       ({"tone": "plain", "enabled": "all"}, (400, "enabled must be a list of known kinds")),
+       ({"tone": "plain", "enabled": list(api.KINDS) + ["deadline"]}, (400, "enabled must be a list of known kinds")),
+       ({"tone": "plain", "enabled": list(api.KINDS) + ["cost"]}, (400, "enabled must be a list of known kinds")),
+       ({"tone": "plain", "enabled": [k for k in api.KINDS if k != "security"]}, (400, "irreversible and security are always on")),
+       ({"tone": "plain", "enabled": [k for k in api.KINDS if k != "irreversible"]}, (400, "irreversible and security are always on"))]
+codes = [status_of(api.settings_route, b) for b, _ in bad]
+check(codes == [want for _, want in bad] and settings_path(h9).read_bytes() == before,
+      f"25d. /settings refuses a bad tone, a non-list, an unknown or duplicate kind and a missing locked kind; the file is byte-identical ({codes})")
+out = api.settings_route({"tone": "friendly", "enabled": ["security", "irreversible", "result"]})
+saved = json.loads(settings_path(h9).read_text(encoding="utf-8"))
+check(out["settings"] == {"tone": "friendly", "enabled": ["result", "irreversible", "security"]}
+      and saved["tone"] == "friendly" and saved["enabled"] == ["result", "irreversible", "security"] and "snoozed" in saved,
+      f"25d. a valid /settings saves in KINDS order, keeps snoozed and answers the report ({saved})")
+
+# 25e. reading never fails: a file without the locked kinds reads them on; each bad field falls back alone
+for raw, want in (({"tone": "plain", "enabled": ["result"], "snoozed": {}}, ("plain", ["result", "irreversible", "security"], {})),
+                  ({"tone": "loud", "enabled": ["cost", "deadline"], "snoozed": {"cost": 3, "x": 1, "result": -1}},
+                   ("plain", ["irreversible", "security", "cost"], {"cost": 3})),
+                  ({"tone": "playful", "enabled": "all", "snoozed": []}, ("playful", list(api.KINDS), {})),
+                  ("[1, 2]", ("plain", list(api.KINDS), {})), ("{broken", ("plain", list(api.KINDS), {}))):
+    save_raw(h9, raw)
+    got = api._settings()
+    check((got["tone"], got["enabled"], got["snoozed"]) == want, f"25e. settings file {raw!r} reads as {want} ({got})")
+settings_path(h9).unlink()
+check(api._settings() == {"tone": "plain", "enabled": list(api.KINDS), "snoozed": {}}, "25e. no settings file: plain, every kind on, nothing snoozed")
+
+# 25f. eviction and chat-gone each write one gone line per dropped note, only {at, gone, check_at}
+h10 = fresh_home("gone-lines")
+Fake.answer = NOTE_POINT
+for i in range(50):
+    api.check("st-1", RECEIPT, 8001.0 + i)
+count = len(ledger_at(h10))
+api.check("st-1", RECEIPT, 8051.0)
+new = ledger_at(h10)[count:]
+gone = [x for x in new if "gone" in x]
+check(len(stored(h10)) == 50 and len(gone) == 1 and set(gone[0]) == {"at", "gone", "check_at"} and gone[0]["gone"] == "evicted"
+      and gone[0]["check_at"] == 8001.0 and isinstance(gone[0]["at"], float),
+      f"25f. the 51st note writes one evicted line carrying the dropped at, keys at, gone, check_at only ({gone})")
+entries = stored(h10)
+notes_path(h10).write_text(json.dumps(entries[:48] + [{**e, "session_id": "st-deleted"} for e in entries[48:]] + [{**entries[0], "at": 0}]),
+                           encoding="utf-8")
+count = len(ledger_at(h10))
+out = api.notes_route({})
+new = ledger_at(h10)[count:]
+check(len(out["notes"]) == 48 and len(new) == 2 and all(set(x) == {"at", "gone", "check_at"} and x["gone"] == "chat_gone" for x in new)
+      and [x["check_at"] for x in new] == [entries[48]["at"], entries[49]["at"]],
+      f"25f. /notes with a deleted chat writes one chat_gone line per dropped note, nothing for a malformed entry ({new})")
+count = len(ledger_at(h10))
+api.notes_route({})
+check(len(ledger_at(h10)) == count, "25f. a second /notes with nothing gone writes no line")
+
+# 25g. /report on a seeded ledger: exact counts, old lines as plain with every kind on
+h11 = fresh_home("report")
+NO_COST = [k for k in api.KINDS if k != "cost"]
+seed(h11, [
+    {"at": 100.0, "chars": 4000, "points": 1, "kinds": ["action"]},
+    {"at": 101.0, "points": 1, "kinds": ["result"], "by": "assistant", "model": "m-a", "cost_usd": 0.01},
+    {"at": 102.0, "feedback": "asked", "check_at": 101.0},
+    {"at": 103.0, "points": 0, "kinds": [], "model": "m-a", "cost_usd": 0.02, "tone": "friendly", "enabled": NO_COST, "filtered": ["cost"]},
+    {"at": 104.0, "points": 1, "kinds": ["tradeoff"], "model": "m-b", "cost_usd": 0.03, "tone": "playful", "enabled": list(api.KINDS)},
+    {"at": 105.0, "feedback": "knew", "check_at": 104.0},
+    {"at": 106.0, "gone": "evicted", "check_at": 104.0},
+    {"at": 107.0, "points": 1, "kinds": ["security"], "model": "m-b", "cost_usd": "x", "tone": "plain", "enabled": list(api.KINDS)},
+    "not json", "[1, 2]",
+    {"at": 108.0, "skipped": "no_receipt"}, {"at": 109.0, "skipped": "no_receipt"}, {"at": 110.0, "skipped": "short"},
+    {"at": 111.0, "points": 1, "kinds": ["unanswered"], "model": "m-a", "cost_usd": 0.04},
+    {"at": 112.0, "gone": "chat_gone", "check_at": 111.0},
+    {"at": 113.0, "points": None, "error": "unreadable", "model": "m-a", "cost_usd": 0.05, "tone": "plain", "enabled": list(api.KINDS)},
+])
+notes_path(h11).parent.mkdir(parents=True, exist_ok=True)
+notes_path(h11).write_text(json.dumps([{**entry, "at": 107.0}]), encoding="utf-8")
+
+
+def outcomes(**counts) -> dict:
+    return {o: counts.get(o, 0) for o in api.OUTCOMES}
+
+
+rep = api.report_route({})
+want_kind = {k: {"key": k, "checks_on": 6 if k == "cost" else 7, **outcomes()} for g in api.PRIORITY for k in g}
+want_kind["result"].update(shown=1, asked=1)
+want_kind["cost"].update(filtered=1)
+want_kind["tradeoff"].update(shown=1, evicted=1)
+want_kind["security"].update(shown=1, open=1)
+want_kind["unanswered"].update(shown=1, chat_gone=1)
+want_kind["other"] = {"key": "other", "checks_on": 0, **outcomes(shown=1, unrecorded=1)}
+want_model = [{"key": "unknown", "checks": 1, "spend_usd": 0.0, **outcomes(shown=1, unrecorded=1), "cost_per_asked_usd": None},
+              {"key": "m-a", "checks": 4, "spend_usd": 0.12, **outcomes(shown=2, asked=1, chat_gone=1, filtered=1), "cost_per_asked_usd": 0.12},
+              {"key": "m-b", "checks": 2, "spend_usd": 0.03, **outcomes(shown=2, evicted=1, open=1), "cost_per_asked_usd": None}]
+want_tone = [{"key": "plain", "checks": 5, "spend_usd": 0.1, **outcomes(shown=4, asked=1, unrecorded=1, open=1, chat_gone=1),
+              "cost_per_asked_usd": 0.1},
+             {"key": "friendly", "checks": 1, "spend_usd": 0.02, **outcomes(filtered=1), "cost_per_asked_usd": None},
+             {"key": "playful", "checks": 1, "spend_usd": 0.03, **outcomes(shown=1, evicted=1), "cost_per_asked_usd": None}]
+check(rep["totals"] == {"checks": 7, "notes": 5, "spend_usd": 0.15, "unpriced": 2, "asked": 1, "cost_per_asked_usd": 0.15,
+                        "skips": {"no_receipt": 2, "short": 1}} and rep["since"] == 100.0 and rep["unreadable_lines"] == 2,
+      f"25g. totals: 7 checks, 5 notes, $0.15 spent, 2 unpriced, 1 asked, skips by reason, since the first line, 2 unreadable ({rep['totals']})")
+check(rep["by_kind"] == list(want_kind.values()), f"25g. by_kind in PRIORITY order, then other; outcomes and checks_on exact ({rep['by_kind']})")
+check(rep["by_model"] == want_model, f"25g. by_model: a missing model is unknown; spend and per asked note exact ({rep['by_model']})")
+check(rep["by_tone"] == want_tone, f"25g. by_tone in TONES order; a line without tone counts as plain ({rep['by_tone']})")
+check(rep["settings"] == {"tone": "plain", "enabled": list(api.KINDS)} and rep["tones"] == list(api.TONES) and rep["notes_max"] == 50
+      and rep["kinds"][:2] == [{"kind": "irreversible", "group": 1, "locked": True}, {"kind": "security", "group": 1, "locked": True}]
+      and [k["kind"] for k in rep["kinds"]] == [k for g in api.PRIORITY for k in g] and rep["suggestions"] == []
+      and list(rep) == ["settings", "tones", "notes_max", "kinds", "since", "unreadable_lines", "totals", "by_kind", "by_model", "by_tone",
+                        "suggestions"],
+      f"25g. the report carries the settings, tones, notes_max and the kinds with group and locked ({list(rep)})")
+seed(h11, [])
+empty = api.report_route({})
+check(empty["totals"]["checks"] == 0 and empty["since"] is None and empty["by_model"] == [] and len(empty["by_kind"]) == 10,
+      "25g. an empty ledger: zero checks, since null, no model rows, ten kind rows")
+
+# 25h. suggestions: Wilson 95% lower bound above 0.5 over the newest 20 rated notes (at least 10) of the current model and tone
+check([round(api._wilson_low(n, r), 3) for n, r in ((9, 10), (8, 10), (12, 15), (15, 20), (14, 20))] == [0.596, 0.49, 0.548, 0.531, 0.481],
+      "25h. the Wilson lower bounds: 9/10 0.596, 8/10 0.490, 12/15 0.548, 15/20 0.531, 14/20 0.481")
+
+
+def rated_lines(kind: str, signals: list, start: float = 1000.0, model: str = "m-a", tone: str = "plain") -> list[dict]:
+    out = []
+    for i, signal in enumerate(signals):
+        at = start + 2 * i
+        out += [{"at": at, "points": 1, "kinds": [kind], "model": model, "tone": tone, "enabled": list(api.KINDS)},
+                {"at": at + 1, "feedback": signal, "check_at": at}]
+    return out
+
+
+def suggested(lines: list, settings=None) -> list:
+    home_s = fresh_home("suggest")
+    seed(home_s, lines)
+    if settings is not None:
+        save_raw(home_s, settings)
+    return api.report_route({})["suggestions"]
+
+
+N, A = "not_useful", "asked"
+for label, signals, want in (("9/10", [N] * 9 + [A], [{"kind": "tradeoff", "negative": 9, "rated": 10}]),
+                             ("8/10", [N] * 8 + [A] * 2, []),
+                             ("12/15", ["already_knew"] * 6 + [N] * 6 + [A] * 3, [{"kind": "tradeoff", "negative": 12, "rated": 15}]),
+                             ("9 rated", [N] * 9, []),
+                             ("15/20", [N] * 15 + [A] * 5, [{"kind": "tradeoff", "negative": 15, "rated": 20}]),
+                             ("14/20", [N] * 14 + [A] * 6, []),
+                             ("25 rated, newest 20 hold 14", [N] * 5 + [N] * 14 + [A] * 6, []),
+                             ("unsure and read not counted", [N] * 8 + [A] * 2 + ["unsure"] * 5 + ["read"] * 5, [])):
+    got = suggested(rated_lines("tradeoff", signals))
+    check(got == want, f"25h. {label}: {want or 'no suggestion'} ({got})")
+got = suggested(rated_lines("tradeoff", [N] * 10) + [{"at": 5000.0, "points": 0, "kinds": [], "model": "m-z"}])
+check(got == [], f"25h. the newest check line names another model: the window under it is empty, no suggestion ({got})")
+got = suggested(rated_lines("tradeoff", [N] * 5) + rated_lines("tradeoff", [N] * 5, 2000.0, model="m-b"))
+check(got == [], f"25h. a window mixing two models counts only the current one (5 rated), no suggestion ({got})")
+got = suggested(rated_lines("tradeoff", [N] * 10), {"tone": "friendly", "enabled": list(api.KINDS)})
+check(got == [], f"25h. notes from another tone do not count for the saved tone ({got})")
+got = suggested(rated_lines("security", [N] * 10) + rated_lines("irreversible", [N] * 10, 3000.0))
+check(got == [], f"25h. a LOCKED kind at 10/10 gets no suggestion ({got})")
+got = suggested(rated_lines("cost", [N] * 10), {"tone": "plain", "enabled": NO_COST})
+check(got == [], f"25h. a disabled kind gets no suggestion ({got})")
+got = suggested(rated_lines("cost", [N] * 10) + rated_lines("result", [N] * 10, 3000.0))
+check([s["kind"] for s in got] == ["result", "cost"], f"25h. suggestions follow PRIORITY order ({got})")
+
+# 25i. Keep hides a suggestion until 10 more rated notes; switching a kind on snoozes it
+h12 = fresh_home("keep")
+lines = rated_lines("tradeoff", [N] * 10)
+seed(h12, lines)
+check([s["kind"] for s in api.report_route({})["suggestions"]] == ["tradeoff"], "25i. 10/10 not useful suggests turning tradeoff off")
+out = api.keep_route({"kind": "tradeoff"})
+check(out["suggestions"] == [] and json.loads(settings_path(h12).read_text(encoding="utf-8"))["snoozed"] == {"tradeoff": 10},
+      "25i. Keep saves snoozed tradeoff = 10 (its rated count) and the suggestion is gone")
+seed(h12, lines + rated_lines("tradeoff", [N] * 9, 4000.0))
+check(api.report_route({})["suggestions"] == [], "25i. 9 more rated notes: still hidden")
+seed(h12, lines + rated_lines("tradeoff", [N] * 10, 4000.0))
+check([s for s in api.report_route({})["suggestions"]] == [{"kind": "tradeoff", "negative": 20, "rated": 20}],
+      "25i. 10 more rated notes: the suggestion is back")
+codes = [status_of(api.keep_route, b) for b in ({"kind": "security"}, {"kind": "irreversible"}, {"kind": "deadline"}, {}, [])]
+check(all(c == (400, "kind must be a kind that can be turned off") for c in codes),
+      f"25i. /keep refuses a locked, unknown or missing kind with the exact 400 ({codes})")
+h13 = fresh_home("switch-on")
+seed(h13, rated_lines("tradeoff", [N] * 10))
+api.settings_route({"tone": "plain", "enabled": [k for k in api.KINDS if k != "tradeoff"]})
+out = api.settings_route({"tone": "plain", "enabled": list(api.KINDS)})
+check(out["suggestions"] == [] and json.loads(settings_path(h13).read_text(encoding="utf-8"))["snoozed"] == {"tradeoff": 10},
+      "25i. switching tradeoff back on snoozes it at its rated count, so the old window does not re-suggest it")
+settings_path(h13).unlink()
+settings_path(h13).mkdir()
+code = status_of(api.settings_route, {"tone": "plain", "enabled": list(api.KINDS)})
+check(code == (500, "settings not saved") and status_of(api.keep_route, {"kind": "tradeoff"}) == (500, "settings not saved"),
+      f"25i. a settings write that fails -> 500 'settings not saved' ({code})")
+
+# 25j. settings storage unavailable: /report has the defaults, /settings and /keep 503, /check uses the plain prompt
+h14 = fresh_home("settings-nostorage")
+Storage.mode = "raises"
+try:
+    rep = api.report_route({})
+    codes = [status_of(api.settings_route, {"tone": "plain", "enabled": list(api.KINDS)}), status_of(api.keep_route, {"kind": "cost"})]
+    Fake.answer = '{"points": []}'
+    out = api.check("st-1", RECEIPT, 9001.0)
+    system = Fake.calls[-1]["messages"][0]["content"]
+finally:
+    Storage.mode = "present"
+check(rep["settings"] == {"tone": "plain", "enabled": list(api.KINDS)} and rep["totals"]["checks"] == 0,
+      f"25j. storage unavailable: /report answers with the default settings ({rep['settings']})")
+check(codes == [(503, "settings storage unavailable")] * 2, f"25j. storage unavailable: /settings and /keep -> 503 ({codes})")
+check(out["points"] == [] and system == api.SYSTEM_PROMPT and ledger_at(h14)[-1]["tone"] == "plain",
+      "25j. storage unavailable: /check still answers, with the plain prompt and every kind on")
+mounted = {(getattr(r, "path", ""), m) for r in api.router.routes for m in getattr(r, "methods", ())}
+check({("/report", "POST"), ("/settings", "POST"), ("/keep", "POST")} <= mounted,
+      f"25k. the router mounts POST /report, /settings and /keep ({sorted(mounted)})")
+Fake.answer = '{"points": []}'
 os.environ["HERMES_HOME"] = str(home)
 
 print(f"\n{failures} FAILED" if failures else "\nALL PASSED")

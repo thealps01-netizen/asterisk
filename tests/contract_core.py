@@ -60,6 +60,8 @@ Seams:
                sends and keeps the user's draft)
   storage      plugins.plugin_storage.plugin_data_dir(name) is <hermes home>/plugin-data/<name>, and it is
                the documented public plugin storage (where the development-phase notes are kept)
+  settings     ctx.registerSettingsPage(page) exists and Settings -> Plugins renders a page's render as a
+               component, and the plugin i18n hook carries t (the settings page and its labels)
 """
 from __future__ import annotations
 
@@ -109,6 +111,10 @@ FILES = {
     "composer_draft": "apps/desktop/src/app/chat/composer/hooks/use-composer-draft.ts",
     "plugin_storage": "plugins/plugin_storage.py",
     "plugin_docs": "website/docs/developer-guide/plugins/index.md",
+    "settings_pages": "apps/desktop/src/contrib/settings-pages.ts",
+    "plugin_settings": "apps/desktop/src/app/settings/plugin-settings.tsx",
+    "boundary": "apps/desktop/src/contrib/react/boundary.tsx",
+    "plugin_i18n": "apps/desktop/src/i18n/plugin-i18n.ts",
 }
 
 
@@ -227,6 +233,13 @@ SEAMS: dict[str, list[tuple[str, str]]] = {
     "storage": [("plugin_storage", r"^def plugin_data_dir\(name: str\) -> Path:$"),
                 ("plugin_storage", lit('root = get_hermes_home() / "plugin-data" / _validate_name(name)')),
                 ("plugin_docs", lit("from plugins.plugin_storage import plugin_data_dir, plugin_db"))],
+    "settings": [("ctx", r"^\s+registerSettingsPage: \(page: PluginSettingsPage\) => \(\) => void$"),
+                 ("settings_pages", lit("export const SETTINGS_PLUGINS_AREA = 'settings.plugins'")),
+                 ("settings_pages", r"^  render: \(\) => ReactNode$"),
+                 ("plugin_settings", lit("<ContribRender render={render} />")),
+                 ("boundary", lit("return createElement(render)")),
+                 ("plugin_i18n", r"^  t: PluginTranslate$"),
+                 ("runtime", lit("react: shimUrl('__HERMES_REACT__')"))],
 }
 
 

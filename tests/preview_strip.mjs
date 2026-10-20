@@ -4,7 +4,8 @@
  *
  * Run: npm ci      (once, in tests/)
  *      node preview_strip.mjs [path/to/plugin.js]
- * Writes tests/.out/preview/{nous,everforest}-{light,dark}.html. Open them in a browser.
+ * Writes tests/.out/preview/{nous,everforest}-{light,dark}.html (the strip) and
+ * tests/.out/preview/settings-{nous,everforest}-{light,dark}.html (the settings page). Open them in a browser.
  *
  * Each page renders the plugin's real components (react-dom/server, the same SDK stub idea as
  * render_check.mjs) inside the core desktop app's compiled CSS (apps/desktop/dist/assets/index-*.css,
@@ -21,6 +22,15 @@
  * buttons share one height (no label wraps inside a button) and, outside the narrow sections, one
  * line; for every entry: no horizontal overflow. At 260px the row may wrap onto more lines.
  * Read it in a browser: document.body.dataset.fit.
+ *
+ * The settings pages render the real page component (createSettingsPage) with its store seeded from
+ * a fixture report: two kinds switched off, Friendly selected, a suggestion for result (12 of 15),
+ * three models (one a long unbreakable id), all three tones and every outcome column non-zero
+ * somewhere; once at 720px and once at 360px. Render lock: before writing any file the script exits
+ * 1 with "FAIL  settings preview: <what is missing>" unless the markup has the kinds, tone and report
+ * sections, ten kind rows, two disabled switches, three tone radios, the three tables and a
+ * suggestion with Turn off and Keep. Their fit report covers each section and each suggestion row:
+ * no horizontal overflow, and both buttons end inside their row, at both widths.
  *
  * Core from HERMES_CORE or <HERMES_HOME>/hermes-agent. A missing core, a missing dist CSS (build the
  * desktop app first) or an unparseable palette exits 1 naming the path.
@@ -110,6 +120,10 @@ writeFileSync(path.join(OUT, 'src', 'react-jsx.mjs'), `import { createRequire } 
 const m = createRequire(${anchor})('react/jsx-runtime')
 export const jsx = m.jsx, jsxs = m.jsxs, Fragment = m.Fragment
 `)
+writeFileSync(path.join(OUT, 'src', 'react-hooks.mjs'), `import { createRequire } from 'node:module'
+const R = createRequire(${anchor})('react')
+export const useEffect = R.useEffect
+`)
 writeFileSync(path.join(OUT, 'src', 'sdk-stub.mjs'), `import { createRequire } from 'node:module'
 const React = createRequire(${anchor})('react')
 export function atom(v) {
@@ -135,7 +149,7 @@ export const host = {
 `)
 const href = f => `'${pathToFileURL(path.join(OUT, 'src', f)).href}'`
 writeFileSync(path.join(OUT, 'src', 'plugin.mjs'),
-  readFileSync(SRC, 'utf8').replace("'@hermes/plugin-sdk'", href('sdk-stub.mjs')).replace("'react/jsx-runtime'", href('react-jsx.mjs')))
+  readFileSync(SRC, 'utf8').replace("'@hermes/plugin-sdk'", href('sdk-stub.mjs')).replace("'react/jsx-runtime'", href('react-jsx.mjs')).replace("from 'react'", `from ${href('react-hooks.mjs')}`))
 const stub = await import(pathToFileURL(path.join(OUT, 'src', 'sdk-stub.mjs')).href)
 const mod = await import(pathToFileURL(path.join(OUT, 'src', 'plugin.mjs')).href)
 const require = createRequire(path.join(HERE, 'package.json'))
@@ -145,7 +159,8 @@ const { renderToStaticMarkup } = require('react-dom/server')
 const registered = []
 const ctx = {
   register: c => registered.push(c),
-  i18n: { register: b => { stub.i18n.bundle = b } },
+  i18n: { register: b => { stub.i18n.bundle = b }, t: key => key },
+  registerSettingsPage() {},
   onEvent() {}, onDispose() {}, rest: async p => (p === '/notes' ? { notes: [] } : {})
 }
 mod.default.register(ctx)
@@ -199,6 +214,87 @@ const FIT = `(() => {
   }
   document.body.dataset.fit = fails.length ? fails.join('; ') : 'ok'
 })()`
+// ── the settings page ───────────────────────────────────────────────────────
+const PAGE_KINDS = ['irreversible', 'security', 'unanswered', 'overclaim', 'constraint', 'result', 'cost', 'tradeoff', 'assumption', 'overreach']
+const PAGE_GROUP = { irreversible: 1, security: 1, unanswered: 2, overclaim: 2, constraint: 2, result: 3, cost: 3, tradeoff: 4, assumption: 4, overreach: 4 }
+const PAGE_OUTCOMES = ['shown', 'filtered', 'asked', 'read', 'already_knew', 'unsure', 'not_useful', 'open', 'evicted', 'chat_gone', 'unrecorded']
+const counts = seed => Object.fromEntries(PAGE_OUTCOMES.map((o, i) => [o, (seed + i) % 4]))
+const LONG_MODEL = 'anthropic/claude-sonnet-5-20261001-experimental-long-context-preview-build-7f3a9c'
+const PAGE_REPORT = {
+  settings: { tone: 'friendly', enabled: PAGE_KINDS.filter(k => k !== 'cost' && k !== 'overreach') },
+  tones: ['plain', 'friendly', 'playful'],
+  notes_max: 50,
+  kinds: PAGE_KINDS.map(k => ({ kind: k, group: PAGE_GROUP[k], locked: k === 'irreversible' || k === 'security' })),
+  since: 1792500000,
+  unreadable_lines: 0,
+  totals: { checks: 148, notes: 41, spend_usd: 3.42, unpriced: 2, asked: 9, cost_per_asked_usd: 0.38, skips: { no_trigger: 61, short: 12 } },
+  by_kind: [...PAGE_KINDS.map((k, i) => ({ key: k, checks_on: 148, ...counts(i) })), { key: 'other', checks_on: 0, ...counts(3) }],
+  by_model: [
+    { key: 'claude-opus-5-5', checks: 90, spend_usd: 2.7, cost_per_asked_usd: 0.45, ...counts(1) },
+    { key: LONG_MODEL, checks: 50, spend_usd: 0.72, cost_per_asked_usd: 0.24, ...counts(2) },
+    { key: 'unknown', checks: 8, spend_usd: 0, cost_per_asked_usd: null, ...counts(0) }
+  ],
+  by_tone: [
+    { key: 'plain', checks: 100, spend_usd: 2.3, cost_per_asked_usd: 0.33, ...counts(2) },
+    { key: 'friendly', checks: 40, spend_usd: 0.9, cost_per_asked_usd: 0.45, ...counts(1) },
+    { key: 'playful', checks: 8, spend_usd: 0.22, cost_per_asked_usd: null, ...counts(0) }
+  ],
+  suggestions: [{ kind: 'result', negative: 12, rated: 15 }]
+}
+const page = () => {
+  const s = mod.createSettings(ctx, stub.host)
+  s.state.set({ status: 'ready', report: PAGE_REPORT, busy: false, detail: '' })
+  return renderToStaticMarkup(createElement(mod.createSettingsPage(s)))
+}
+const pageMarkup = page()
+const pageLock = [
+  ['the kinds section', /<section data-asterisk="kinds"/],
+  ['the tone section', /<section data-asterisk="tone"/],
+  ['the report section', /<section data-asterisk="report"/],
+  ['the by-kind table', /data-asterisk="by-kind"/],
+  ['the by-model table', /data-asterisk="by-model"/],
+  ['the by-tone table', /data-asterisk="by-tone"/],
+  ['a suggestion with Turn off and Keep', /data-asterisk="suggestion"[^]*data-asterisk="turn-off"[^]*data-asterisk="keep"/]
+].filter(([, re]) => !re.test(pageMarkup)).map(([what]) => what)
+const pageCount = (re, n, what) => {
+  const found = (pageMarkup.match(re) || []).length
+  if (found !== n) pageLock.push(`${what} (${found} of ${n})`)
+}
+pageCount(/data-asterisk="kind-row"/g, 10, 'ten kind rows')
+pageCount(/role="switch"[^>]*disabled=""|disabled=""[^>]*role="switch"/g, 2, 'two disabled switches')
+pageCount(/role="radio"/g, 3, 'three tone radios')
+if (pageLock.length) fail(`settings preview: ${pageLock.join(', ')}`)
+const PAGE_FIT = `(() => {
+  const fails = []
+  for (const box of document.querySelectorAll('.pv-page')) {
+    const width = box.dataset.width
+    box.querySelectorAll('section').forEach(sec => {
+      if (sec.scrollWidth > sec.clientWidth + 0.5) fails.push(width + ' / ' + sec.dataset.asterisk + ': the section overflows')
+    })
+    box.querySelectorAll('.asterisk-suggestion').forEach((row, i) => {
+      const right = row.getBoundingClientRect().right
+      if (row.scrollWidth > row.clientWidth + 0.5) fails.push(width + ' / suggestion ' + (i + 1) + ': the row overflows')
+      const btns = [...row.querySelectorAll('.asterisk-suggest-btn')]
+      if (btns.length !== 2) fails.push(width + ' / suggestion ' + (i + 1) + ': ' + btns.length + ' buttons')
+      if (btns.some(b => b.getBoundingClientRect().right > right + 0.5)) fails.push(width + ' / suggestion ' + (i + 1) + ': a button ends past the row')
+    })
+  }
+  document.body.dataset.fit = fails.length ? fails.join('; ') : 'ok'
+})()`
+const settingsHtml = (name, mode, isDark, vars) => `<!doctype html>
+<html${isDark ? ' class="dark"' : ''} lang="en" data-hermes-theme="${name}" data-hermes-mode="${mode}" style="color-scheme: ${mode}; ${vars}">
+<head><meta charset="utf-8"><title>Asterisk settings — ${name} ${mode}</title>
+<style>${appCss}</style>
+<style>
+body{margin:0;padding:24px;background:var(--ui-bg, var(--theme-background-seed));color:var(--ui-text-primary);font-family:var(--font-sans)}
+.pv-h{font-size:11px;font-weight:600;margin:0 0 8px;color:var(--ui-text-tertiary)}
+.pv-wrap{display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start}
+.pv-page{box-sizing:border-box;padding:20px;border:1px solid var(--ui-stroke-secondary);border-radius:14px}
+</style></head>
+<body><div class="pv-wrap">
+${[720, 360].map(w => `<div><h2 class="pv-h">Settings → Plugins → Asterisk, ${w}px</h2><div class="pv-page" data-width="${w}px" style="width:${w}px">${pageMarkup}</div></div>`).join('\n')}
+</div><script>${PAGE_FIT}</script></body></html>
+`
 for (const name of ['nous', 'everforest']) {
   const { light, dark } = palette(name)
   for (const [mode, c] of [['light', light], ['dark', dark]]) {
@@ -236,5 +332,8 @@ ${section('Three notes, one in the focused chat, narrow (260px)', strip(NOTES), 
     const file = path.join(OUT, `${name}-${mode}.html`)
     writeFileSync(file, html)
     console.log(`wrote ${file}`)
+    const settingsFile = path.join(OUT, `settings-${name}-${mode}.html`)
+    writeFileSync(settingsFile, settingsHtml(name, mode, isDark, vars))
+    console.log(`wrote ${settingsFile}`)
   }
 }

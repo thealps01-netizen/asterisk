@@ -136,6 +136,10 @@ writeFileSync(path.join(OUT, 'react-jsx.mjs'), `import { createRequire } from 'n
 const m = createRequire(${anchor})('react/jsx-runtime')
 export const jsx = m.jsx, jsxs = m.jsxs, Fragment = m.Fragment
 `)
+writeFileSync(path.join(OUT, 'react-hooks.mjs'), `import { createRequire } from 'node:module'
+const R = createRequire(${anchor})('react')
+export const useEffect = R.useEffect
+`)
 // The SDK stub; an old core's SDK is the same without SESSION_ROW_AREAS, COMPOSER_AREAS or
 // host.composer.insertText.
 const stubSource = ({ composer = true, rows = true, insert = true } = {}) => `import { createRequire } from 'node:module'
@@ -183,7 +187,7 @@ const href = f => `'${pathToFileURL(path.join(OUT, f)).href}'`
 const variant = (stubFile, pluginFile, opts) => {
   writeFileSync(path.join(OUT, stubFile), stubSource(opts))
   writeFileSync(path.join(OUT, pluginFile),
-    source.replaceAll("'@hermes/plugin-sdk'", href(stubFile)).replace("'react/jsx-runtime'", href('react-jsx.mjs')))
+    source.replaceAll("'@hermes/plugin-sdk'", href(stubFile)).replace("'react/jsx-runtime'", href('react-jsx.mjs')).replace("from 'react'", `from ${href('react-hooks.mjs')}`))
 }
 variant('sdk-stub.mjs', 'plugin-under-test.mjs')
 const stub = await import(pathToFileURL(path.join(OUT, 'sdk-stub.mjs')).href)
@@ -205,6 +209,7 @@ const listeners = new Map()
 const disposers = []
 const rest = [] // /check and /dismiss calls; /status goes to statusCalls, /notes to notesCalls
 const statusCalls = []
+const pages = [] // registerSettingsPage calls
 const notesCalls = []
 let notesAnswer = { notes: [] }
 let reply = { points: [], cost_usd: 0.0213, cost_status: 'estimated', model: 'fake-model-x', at: 1, title: null }
@@ -212,7 +217,8 @@ let restFails = null
 const pet = { visible: false, said: [] }
 const ctx = {
   register: c => { registered.push(c); return () => {} },
-  i18n: { register: b => { ctx.bundle = b; stub.i18n.bundle = b } },
+  i18n: { register: b => { ctx.bundle = b; stub.i18n.bundle = b }, t: key => mod.t(key) },
+  registerSettingsPage: p => { pages.push(p); return () => {} },
   onEvent: (type, fn) => { if (!listeners.has(type)) listeners.set(type, new Set()); listeners.get(type).add(fn); return () => listeners.get(type).delete(fn) },
   onDispose: fn => { disposers.push(fn) },
   rest: async (p, opts) => {
@@ -735,11 +741,12 @@ check(reactWarnings.length === 0, `React logged no warning (${reactWarnings.slic
 // /notes answers `notes` (an Error throws; a function is called and its promise awaited) and is
 // counted apart from /check and /dismiss.
 function fakeCtx(answer, { notes = { notes: [] }, pet = null } = {}) {
-  const c = { registered: [], listeners: new Set(), disposers: [], status: [], checks: [], notes: [], i18n: 0,
+  const c = { registered: [], listeners: new Set(), disposers: [], status: [], checks: [], notes: [], pages: [], i18n: 0,
     checkAnswer: { points: [], cost_usd: 0.01, cost_status: 'estimated', at: 9, title: null } }
   c.ctx = {
     register: x => { c.registered.push(x); return () => {} },
-    i18n: { register: () => { c.i18n++ } },
+    i18n: { register: () => { c.i18n++ }, t: key => key },
+    registerSettingsPage: p => { c.pages.push(p); return () => {} },
     onEvent: (type, fn) => { c.listeners.add(fn); return () => c.listeners.delete(fn) },
     onDispose: fn => { c.disposers.push(fn) },
     rest: async (p, opts) => {
@@ -839,9 +846,9 @@ for (const [name, opts] of [['SESSION_ROW_AREAS', { rows: false }], ['COMPOSER_A
     })
     const toasts = oldStub.calls.notify.slice(before)
     const subs = oldStub.host.state.focusedSessionId.subs.size + oldStub.host.state.focusedStoredSessionId.subs.size
-    check(!threw && c.registered.length === 0 && c.listeners.size === 0 && c.i18n === 0 && subs === 0 && c.notes.length === 0
+    check(!threw && c.registered.length === 0 && c.pages.length === 0 && c.listeners.size === 0 && c.i18n === 0 && subs === 0 && c.notes.length === 0
       && same(c.status, [{ method: 'POST', body: { desktop_ready: false } }]) && (notice ? updateToast(toasts) : toasts.length === 0),
-      `${lock}without ${name}, update_notice ${notice}: register does not throw, registers nothing, adds no listener, posts /status { desktop_ready: false } once and no /notes, ${notice ? 'one update warning' : 'no notice'} (${threw?.message ?? 'no throw'}; ${c.registered.length} contributions; ${JSON.stringify(c.status)}; ${JSON.stringify(toasts)})`)
+      `${lock}without ${name}, update_notice ${notice}: register does not throw, registers nothing (no settings page), adds no listener, posts /status { desktop_ready: false } once and no /notes, ${notice ? 'one update warning' : 'no notice'} (${threw?.message ?? 'no throw'}; ${c.registered.length} contributions; ${JSON.stringify(c.status)}; ${JSON.stringify(toasts)})`)
   }
   let threw = null
   try {
@@ -954,6 +961,181 @@ check(addedR.length === 1 && addedR[0].id === 'asterisk-restore-error' && addedR
   `23e. a failed /notes is one asterisk-restore-error toast with its copy (${JSON.stringify(addedR)})`)
 r3.disposers.forEach(fn => fn())
 check(reactWarnings.length === 0, `React logged no warning in the restart runs (${reactWarnings.slice(0, 2).join(' | ')})`)
+
+// 25. the settings page (4.4.0): Settings → Plugins → Asterisk
+const KINDS_P = ['irreversible', 'security', 'unanswered', 'overclaim', 'constraint', 'result', 'cost', 'tradeoff', 'assumption', 'overreach']
+const GROUP_P = { irreversible: 1, security: 1, unanswered: 2, overclaim: 2, constraint: 2, result: 3, cost: 3, tradeoff: 4, assumption: 4, overreach: 4 }
+const OUTCOMES_P = ['shown', 'filtered', 'asked', 'read', 'already_knew', 'unsure', 'not_useful', 'open', 'evicted', 'chat_gone', 'unrecorded']
+const outc = (o = {}) => Object.fromEntries(OUTCOMES_P.map(k => [k, o[k] ?? 0]))
+const SINCE = 1792500000
+const REPORT = {
+  settings: { tone: 'plain', enabled: KINDS_P.filter(k => k !== 'cost') },
+  tones: ['plain', 'friendly', 'playful'],
+  notes_max: 50,
+  kinds: KINDS_P.map(k => ({ kind: k, group: GROUP_P[k], locked: k === 'irreversible' || k === 'security' })),
+  since: SINCE,
+  unreadable_lines: 0,
+  totals: { checks: 12, notes: 5, spend_usd: 0.1, unpriced: 0, asked: 2, cost_per_asked_usd: 0.05, skips: { no_receipt: 2, short: 1 } },
+  by_kind: [...KINDS_P.map(k => ({ key: k, checks_on: 12, ...outc(k === 'result' ? { shown: 4, asked: 2, not_useful: 2 } : {}) })),
+    { key: 'other', checks_on: 0, ...outc({ shown: 1, unrecorded: 1 }) }],
+  by_model: [{ key: 'm-a', checks: 11, spend_usd: 0.1, cost_per_asked_usd: 0.05, ...outc({ shown: 4, asked: 2, not_useful: 2 }) },
+    { key: 'unknown', checks: 1, spend_usd: 0, cost_per_asked_usd: null, ...outc({ shown: 1, unrecorded: 1 }) }],
+  by_tone: ['plain', 'friendly', 'playful'].map(k => ({ key: k, checks: k === 'plain' ? 12 : 0, spend_usd: k === 'plain' ? 0.1 : 0,
+    cost_per_asked_usd: k === 'plain' ? 0.05 : null, ...outc(k === 'plain' ? { shown: 5, asked: 2 } : {}) })),
+  suggestions: [{ kind: 'result', negative: 12, rated: 15 }]
+}
+const SUGGEST = 'Turn off Doubtful result? 12 of the last 15 rated notes were Not useful or Already knew. Turning it off stops Asterisk looking for it; you can turn it back on above.'
+const COLS_MODEL = ['Model', 'Checks', 'Spent', 'Per asked note', 'Shown', 'Filtered', 'Asked', 'Read', 'Already knew', 'Not sure', 'Not useful', 'Open', 'Dropped',
+  'Chat deleted', 'Unrecorded']
+/** One registration whose ctx answers the page's three routes through `answer(path, body)` (a promise, a value or an Error). */
+function pageCtx(answer) {
+  const c = { calls: [], pages: [], disposers: [] }
+  c.ctx = {
+    register: () => () => {},
+    i18n: { register: () => {}, t: key => mod.t(key) },
+    onEvent: () => () => {},
+    onDispose: fn => { c.disposers.push(fn) },
+    registerSettingsPage: p => { c.pages.push(p); return () => {} },
+    rest: async (p, opts) => {
+      if (p === '/status') return { ready: true, update_notice: false, old_install: false }
+      if (p === '/notes') return { notes: [] }
+      c.calls.push([p, opts])
+      const a = await answer(p, opts?.body)
+      if (a instanceof Error) throw a
+      return a
+    }
+  }
+  return c
+}
+const echo = (p, body) => (p === '/settings' ? { ...REPORT, settings: { tone: body.tone, enabled: body.enabled } } : p === '/keep' ? { ...REPORT, suggestions: [] } : REPORT)
+const flush = () => act(async () => { await settle(); await settle() })
+let pageAnswer = echo
+const pc = pageCtx((p, body) => pageAnswer(p, body))
+await quietly(async () => {
+  mod.default.register(pc.ctx)
+  await settle()
+  await settle()
+})
+check(pages.length === 1 && pages[0].id === 'settings' && pages[0].title === 'Asterisk' && pages[0].icon === 'eye' && typeof pages[0].render === 'function'
+  && registered.length === 2 && pc.pages.length === 1,
+  `25. registration adds exactly one settings page: id settings, title Asterisk, icon eye, a render function; the two contributions unchanged (${JSON.stringify(pages.map(p => [p.id, p.title]))})`)
+let releasePage
+pageAnswer = () => new Promise(r => { releasePage = r })
+const pg = mount(createElement(pc.pages[0].render))
+await flush()
+const root = () => $(pg.el, '[data-asterisk="settings"]')
+check(text($(pg.el, '[data-asterisk="loading"]')) === 'Loading…' && same(pc.calls, [['/report', { method: 'POST', body: {} }]]),
+  `25. mounting the page sends exactly ['/report', { method: 'POST', body: {} }] and shows Loading… (${JSON.stringify(pc.calls)})`)
+await act(async () => { releasePage(REPORT); await settle(); await settle() })
+pageAnswer = echo
+const sections = ['kinds', 'tone', 'report'].map(n => $(pg.el, `section[data-asterisk="${n}"]`))
+check(root()?.className === 'asterisk-settings' && sections.every(s => s && $(s, 'h2'))
+  && same(sections.map(s => text($(s, 'h2'))), ['What it looks for', 'How it talks', 'How useful it is']),
+  `25. the page root holds the three sections, each with its h2 (${sections.map(s => text($(s, 'h2')))})`)
+const kindRows = () => $$(pg.el, '[data-asterisk="kind-row"]')
+const switchOf = k => $(pg.el, `[data-asterisk="kind-row"][data-kind="${k}"] .asterisk-switch`)
+check(same(kindRows().map(r => r.getAttribute('data-kind')), KINDS_P)
+  && same($$(pg.el, '[data-asterisk="group"]').map(text), ['Priority 1', 'Priority 2', 'Priority 3', 'Priority 4'])
+  && text($(kindRows()[0], '.asterisk-kind-label')) === 'Irreversible step'
+  && text($(kindRows()[0], '.asterisk-kind-desc')) === 'A step that deleted, overwrote or published something, which the reply plays down.',
+  `25. ten kind rows in PRIORITY order under Priority 1 to 4, with label and description (${kindRows().map(r => r.getAttribute('data-kind'))})`)
+const locked = $$(pg.el, '.asterisk-switch').filter(b => b.disabled)
+check($$(pg.el, '.asterisk-switch').every(b => b.getAttribute('role') === 'switch' && b.getAttribute('type') === 'button')
+  && same(locked.map(b => b.closest('[data-asterisk="kind-row"]').getAttribute('data-kind')), ['irreversible', 'security'])
+  && locked.every(b => b.getAttribute('aria-checked') === 'true') && switchOf('cost').getAttribute('aria-checked') === 'false'
+  && switchOf('tradeoff').getAttribute('aria-checked') === 'true'
+  && $$(pg.el, '[data-asterisk="locked"]').length === 2 && text($(pg.el, '[data-asterisk="locked"]')) === 'Always on: a missed irreversible step or security risk costs the most.',
+  `25. the two locked switches are disabled and checked with their reason; cost off, tradeoff on (${locked.length} disabled)`)
+const radios = () => $$(pg.el, '[role="radiogroup"] [role="radio"]')
+check(radios().length === 3 && same(radios().map(r => text($(r, '.asterisk-tone-label'))), ['Plain', 'Friendly', 'Playful'])
+  && same(radios().map(r => r.getAttribute('aria-checked')), ['true', 'false', 'false']) && radios().every(r => r.classList.contains('asterisk-tone')),
+  `25. three tone radios Plain, Friendly, Playful; the saved one is checked (${radios().map(r => r.getAttribute('aria-checked'))})`)
+const tables = ['by-kind', 'by-model', 'by-tone'].map(n => $(pg.el, `table[data-asterisk="${n}"]`))
+check(tables.every(Boolean) && same($$(tables[1], 'th').map(text), COLS_MODEL) && $$(tables[0], 'tbody tr').length === 11
+  && text($$(tables[0], 'tbody tr')[10].children[0]) === 'Older kinds' && same($$(tables[2], 'tbody tr').map(r => text(r.children[0])), ['Plain', 'Friendly', 'Playful'])
+  && text($$(tables[1], 'tbody tr')[1].children[0]) === 'Unknown model' && text($$(tables[1], 'tbody tr')[1].children[3]) === '–',
+  `25. the three tables render: kind (with Older kinds), model (with its money columns) and tone (${tables.map(Boolean)})`)
+const sug = () => $$(pg.el, '[data-asterisk="suggestion"]')
+check(sug().length === 1 && sug()[0].getAttribute('data-kind') === 'result' && text($(sug()[0], '.asterisk-suggest-text')) === SUGGEST
+  && same($$(sug()[0], 'button').map(text), ['Turn off', 'Keep']) && $$(sug()[0], 'button').every(b => b.className === 'asterisk-suggest-btn'),
+  `25. the suggestion names the kind with its counts and offers Turn off and Keep (${text(sug()[0])})`)
+const sinceDate = new Date(SINCE * 1000).toISOString().slice(0, 10)
+check(text($(pg.el, '[data-asterisk="summary"]')) === `12 checks · 5 notes · $0.10 spent · $0.05 per asked note · 3 skipped · since ${sinceDate}`
+  && text($(pg.el, '[data-asterisk="legend"]')).includes('Dropped: left when more than 50 notes were waiting.'),
+  `25. the summary line and the legend (${text($(pg.el, '[data-asterisk="summary"]'))})`)
+const before25 = pc.calls.length
+await click(switchOf('security'))
+check(pc.calls.length === before25, '25. a locked switch click sends nothing')
+let releaseSave
+pageAnswer = (p, body) => new Promise(r => { releaseSave = () => r(echo(p, body)) })
+await click(switchOf('tradeoff'))
+const controls = () => [...$$(pg.el, '.asterisk-switch'), ...radios(), ...$$(pg.el, '.asterisk-suggest-btn')]
+check(same(pc.calls.at(-1), ['/settings', { method: 'POST', body: { tone: 'plain', enabled: REPORT.settings.enabled.filter(k => k !== 'tradeoff') } }])
+  && controls().every(b => b.disabled),
+  `25. a switch click sends /settings with the full list minus that kind; while it is pending every control is disabled (${JSON.stringify(pc.calls.at(-1))})`)
+await act(async () => { releaseSave(); await settle(); await settle() })
+pageAnswer = echo
+check(switchOf('tradeoff').getAttribute('aria-checked') === 'false' && !switchOf('tradeoff').disabled, '25. the answer redraws the page: tradeoff off, controls enabled again')
+await click(radios()[1])
+check(same(pc.calls.at(-1), ['/settings', { method: 'POST', body: { tone: 'friendly', enabled: REPORT.settings.enabled.filter(k => k !== 'tradeoff') } }])
+  && radios()[1].getAttribute('aria-checked') === 'true',
+  `25. a tone click sends /settings with that tone and the current kinds (${JSON.stringify(pc.calls.at(-1))})`)
+await click($(sug()[0], '[data-asterisk="turn-off"]'))
+check(same(pc.calls.at(-1)?.[1]?.body?.enabled, REPORT.settings.enabled.filter(k => k !== 'tradeoff' && k !== 'result')) && pc.calls.at(-1)[1].body.tone === 'friendly',
+  `25. Turn off sends /settings without the kind, the tone unchanged (${JSON.stringify(pc.calls.at(-1))})`)
+await click($(sug()[0], '[data-asterisk="keep"]'))
+check(same(pc.calls.at(-1), ['/keep', { method: 'POST', body: { kind: 'result' } }]) && sug().length === 0,
+  `25. Keep sends /keep { kind } and the answer has no suggestion (${JSON.stringify(pc.calls.at(-1))})`)
+pageAnswer = p => (p === '/settings' ? new Error('disk full') : echo(p))
+const toastsS = stub.calls.notify.length
+await quietly(() => click(switchOf('assumption')))
+const addedS = stub.calls.notify.slice(toastsS)
+check(addedS.length === 1 && addedS[0].id === 'asterisk-settings-error' && addedS[0].kind === 'error' && addedS[0].title === 'Asterisk'
+  && addedS[0].message === 'Could not save the settings: disk full' && kindRows().length === 10 && switchOf('assumption').getAttribute('aria-checked') === 'true'
+  && !switchOf('assumption').disabled,
+  `25. a failed save is one asterisk-settings-error notice and the page keeps the last report (${JSON.stringify(addedS)})`)
+pageAnswer = echo
+const vars25 = [...(text($(pg.el, 'style')).matchAll(/var\(\s*(--[\w-]+)/g))].map(x => x[1])
+const css25 = text($(pg.el, 'style'))
+const rules25 = [...css25.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(x => ({ sel: x[1].trim(), body: x[2] }))
+const moving25 = rules25.filter(r => /(^|;)\s*(transition|animation)\s*:/.test(r.body))
+check(vars25.length > 10 && vars25.every(v => v.startsWith('--ui-') || v.startsWith('--font-'))
+  && !/#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|oklch|oklab)\(|:\s*(?:white|black)\b/i.test(css25),
+  `25. the page CSS names only --ui-* and --font-* tokens and no literal colour (${[...new Set(vars25)].length} tokens)`)
+check(/\.asterisk-settings\{[^}]*container-type:inline-size/.test(css25) && css25.includes('@container asterisk-settings') && !css25.includes('@media'),
+  '25. the page root is an inline-size container, the narrow layout is an @container asterisk-settings rule, and there is no @media')
+check(moving25.length >= 1 && moving25.every(r => r.sel.includes('[data-motion="full"]')) && root()?.getAttribute('data-motion') === 'full',
+  `25. every transition or animation selector includes [data-motion="full"] (${moving25.map(r => r.sel)})`)
+const texts25 = []
+const collect25 = el => {
+  texts25.push(el.textContent)
+  for (const n of el.querySelectorAll('*')) for (const a of ['aria-label', 'title', 'data-label']) if (n.getAttribute(a)) texts25.push(n.getAttribute(a))
+}
+collect25(root())
+check(texts25.length > 10 && !texts25.some(x => x.replace(css25, '').includes('*') || GLYPHS.test(x)) && !texts25.some(x => x.replace(css25, '').includes('asterisk.')),
+  `25. no rendered page text or attribute has an asterisk, a glyph or a raw key (${texts25.length} strings)`)
+act(() => pg.root.unmount())
+reduce = true
+const pgR = mount(createElement(pc.pages[0].render))
+await flush()
+check($(pgR.el, '[data-asterisk="settings"]')?.getAttribute('data-motion') === 'reduce', '25. reduced motion -> data-motion="reduce" on the page')
+act(() => pgR.root.unmount())
+reduce = false
+pageAnswer = p => (p === '/report' ? new Error('network down') : echo(p))
+const pe = mount(createElement(pc.pages[0].render))
+await quietly(flush)
+const reportCalls = () => pc.calls.filter(x => x[0] === '/report').length
+const reportsBefore = reportCalls()
+check(text($(pe.el, '[data-asterisk="load-error"] p')) === 'Could not load the report: network down' && text($(pe.el, '[data-asterisk="retry"]')) === 'Try again',
+  `25. a failed load shows its error and Try again (${text($(pe.el, '[data-asterisk="load-error"]'))})`)
+pageAnswer = () => ({ ...REPORT, totals: { ...REPORT.totals, checks: 0 }, suggestions: [] })
+await click($(pe.el, '[data-asterisk="retry"]'))
+await flush()
+check(reportCalls() === reportsBefore + 1 && $$(pe.el, 'section').length === 3 && text($(pe.el, '[data-asterisk="empty"]')) === 'No checks recorded yet.',
+  `25. Try again re-sends /report; a report with no checks says No checks recorded yet. (${reportCalls() - reportsBefore} re-sent)`)
+act(() => pe.root.unmount())
+pc.disposers.forEach(fn => fn())
+check(reactWarnings.length === 0, `25. React logged no warning on the settings page (${reactWarnings.slice(0, 2).join(' | ')})`)
 
 // 1. dispose
 disposers.forEach(fn => fn())

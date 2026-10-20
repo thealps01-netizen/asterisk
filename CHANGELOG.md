@@ -1,5 +1,25 @@
 # Changelog
 
+## 4.4.0 (2026-10-20)
+
+- A settings page, Settings → Plugins → Asterisk, saved per profile in
+  `plugin-data/asterisk/settings.json`: switch each kind on or off (Irreversible step and Security
+  risk are always on; a kind switched off is removed from the prompt, and a point the model still
+  writes for it is filtered and counted, never shown), and choose the tone, Plain (default),
+  Friendly or Playful (wording only; irreversible and security notes stay plain). Changes apply to
+  the next check.
+- "How useful it is": checks, notes, spend and cost per asked note, and how each note left, by kind,
+  by model and by tone, computed from the text-free ledger. When a kind's last rated notes under the
+  current model and tone are mostly Not useful or Already knew (Wilson 95% lower bound above 0.5 over
+  the newest 20, at least 10), the page suggests turning it off; "Turn off" and "Keep" (hide it until
+  10 more rated notes). Nothing changes without a click.
+- New endpoints: `POST /report`, `POST /settings {tone, enabled}` and `POST /keep {kind}`.
+- Ledger: check and unreadable lines add `tone` and `enabled` (and `filtered` for a filtered point);
+  a note that leaves without a button now writes `{at, gone: "evicted" | "chat_gone", check_at}`
+  (more than 50 waiting, or its chat deleted) instead of leaving no trace. No text is added.
+- No change to what is checked by default, the trigger or how the model is chosen: with no settings saved the prompt is byte-identical to 4.3.0.
+- The desktop half and the backend must come from the same release (a 4.3.0 backend answers 404 to /report: the page shows its load error).
+
 ## 4.3.0 (2026-10-18)
 
 - Two more buttons, "Not sure" and "Not useful", on every note that shows its sentence (the chat you

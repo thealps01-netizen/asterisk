@@ -155,7 +155,9 @@ Naming the provider when reading it would read the Anthropic shape and count zer
 the same model id prices differently per provider), input/output tokens, cost and its status,
 seconds, `points` (0 or 1), `kinds`, `by` (null,
 `assistant` or `user`), `turn_chars`, `tool_results`, `truncated`, `turn_complete` (the receipt's
-own flag) and `earlier_chars` (the length of the earlier-messages block, 0 when none). Never any
+own flag), `earlier_chars` (the length of the earlier-messages block, 0 when none), `tone` and
+`enabled` (the saved tone and the kinds that were on, ids only; `filtered` when a point of a kind
+switched off was dropped). Never any
 text: not the turn, not an earlier message, not the reply, not the point, its headline or the
 chat's title. A skipped turn writes `{at, skipped}` with its reason (a check line's `chars` under
 3,000 marks a tool-triggered check). A failed call writes no line; an unreadable answer writes one with `"points": null, "error":
@@ -175,6 +177,11 @@ it answers and the signal says how the note left:
 Before 4.3.0 there was no `unsure` or `not_useful`; earlier lines stay as they are (before 4.2.0
 only `already_knew` was written; "Got it" recorded nothing). Lines written by 1.0.0 stay as they are.
 
+A stored note that leaves without a button writes `{at, "gone": <reason>, check_at}`:
+`"gone": "evicted"` when more than 50 notes were waiting and the oldest was dropped, `"gone":
+"chat_gone"` when its chat was deleted. Before 4.4.0 these left no line. Before 4.4.0 check lines
+have no `tone` or `enabled`: the report counts them as plain with every kind on.
+
 **Review after week two:** how many checks, the total cost, the share of checks with a point
 (expected to be a minority — most turns have nothing to flag), how many were `unreadable` or
 `turn_unreadable`, how each point left (`asked`, `read`, `already_knew`, `unsure` and `not_useful`
@@ -189,11 +196,20 @@ restart. The backend keeps the text of each pending note — headline, sentence,
 cost and who decided, plus the chat's id and the check's `at` — in
 `<HERMES_HOME>/plugin-data/asterisk/notes.json` (the host's plugin storage,
 `plugins.plugin_storage.plugin_data_dir`, so it follows the active profile), apart from the ledger,
-which still holds no text. It keeps at most 50 notes; past that the oldest is dropped. "Ask in
+which still holds no text. It keeps at most 50 notes; past that the oldest is dropped and one
+`"gone": "evicted"` ledger line records it. "Ask in
 chat", "Got it", "Already knew", "Not sure" and "Not useful" each remove the note from the file (`POST /dismiss`). At each app
 start the desktop half asks for the pending notes (`POST /notes`, after `/status`, only when
-Asterisk is on); a note whose chat no longer exists in the store is dropped then. When the store
-cannot be opened nothing is dropped. Restored notes do not unfold the strip or make the pet speak.
+Asterisk is on); a note whose chat no longer exists in the store is dropped then, with one
+`"gone": "chat_gone"` ledger line. When the store cannot be opened nothing is dropped. Restored
+notes do not unfold the strip or make the pet speak. The gone lines are written only after
+`notes.json` was written.
+
+Why 50 stays: at about 66 notes a day that is about 18 hours of notes, so a note left alone for about
+a day leaves. The strip renders every pending note, so a larger cap would lengthen it without adding
+ratings. The cap was measured to fire (at least 35 of 199 notes silently gone in 3 days); with the
+`evicted` line it is a counted outcome ("Dropped" in the report) instead of a loss, so the right cap
+can be decided later from the report.
 
 - Notes from 4.1.0 are not carried over: 4.1.0 kept them in memory only and wrote none to disk.
 - A downgrade or an uninstall leaves `notes.json` (and a `notes.json.tmp` from an interrupted write)
@@ -206,8 +222,97 @@ cannot be opened nothing is dropped. Restored notes do not unfold the strip or m
 through `notes()`), the `/notes` route, the keep call in `check()` and the drop call in
 `dismiss()`; in `desktop/plugin.js` delete `restore()`, its call in `register` and the `gone` set;
 delete their locks in `tests/check_api.py` and `tests/render_check.mjs`, their lines in
-`tests/canary_audit.py`, the `notes` rule in `tests/audit_static.py` and the `storage` seam in
-`tests/contract_core.py`; then delete the file.
+`tests/canary_audit.py` and the note parts of the `notes` rule in `tests/audit_static.py`; then
+delete the file. The `storage` seam in `tests/contract_core.py`, the `plugin_data_dir` import and
+`_data_file` stay: `settings.json` uses them. The report's `open` and `evicted` outcomes disappear
+with the notes.
+
+## Settings and the report
+
+Settings → Plugins → Asterisk is one page with three sections: what it looks for, how it talks, and
+how useful it is. It edits the active profile (the profile whose replies are checked).
+
+**Where the settings live.** `<HERMES_HOME>/plugin-data/asterisk/settings.json`, beside `notes.json`
+(the same host storage helper, so per profile): `{"tone": "plain" | "friendly" | "playful",
+"enabled": [<kinds, in KINDS order>], "snoozed": {<kind>: <rated count>}}`. With no file, or a field
+that cannot be read, that field takes its default: Plain, every kind on, nothing snoozed; the file is
+never rewritten on read and a bad field never blocks a check. `/check` reads the settings once per
+check, before the model call, so a change applies to the next check. With no storage `/check` uses
+the defaults, `/report` answers with them, and `/settings` and `/keep` answer 503 `settings storage
+unavailable`.
+
+**Locked kinds.** `irreversible` and `security` (`LOCKED`) are always on: a missed irreversible step
+or security risk costs the most, so the page shows their switch disabled with that reason,
+`/settings` refuses a list without them (400 `irreversible and security are always on`), and a file
+that lacks them still reads them as on. The priority order is shown, not editable.
+
+**Enabled kinds.** A kind switched off is removed from the prompt: its bullet, its entry in the
+priority list (an empty group is dropped and the rest renumbered) and its id in the JSON template
+(`system_prompt(tone, enabled)` in `dashboard/plugin_api.py`). A point the model still writes for it
+is filtered: no note, no notice, and the check line records `"filtered": [<kind>]` with `kinds` `[]`,
+so the report counts it instead of losing it. An id outside `KINDS` is still unreadable (502).
+
+**Tone.** Plain adds nothing: with no settings saved the prompt is byte-identical to 4.3.0
+(`SYSTEM_PROMPT = system_prompt("plain", KINDS)`). Friendly and Playful each add one rule after the
+headline rule (the text is in `system_prompt`'s `_TONE_LINES`). Each says the tone changes only the
+wording, never whether there is a point, which point or its kind, and that an irreversible or
+security point is always written plainly. There is no free-text tone: it would put the user's text
+into the checker's instructions. The presets follow CodeRabbit's `tone_instructions`
+(https://docs.coderabbit.ai/reference/configuration) and the NN/g tone dimensions
+(https://www.nngroup.com/articles/tone-of-voice-dimensions/); the plain-writing rule follows the
+finding that humour lowered short-term trust in an AI conveying information
+(https://jcom.sissa.it/article/pubid/JCOM_2406_2025_A04/) and that humour in repeated warnings reads
+as sarcasm (German UPA error-message heuristics). Whether a tone changes usefulness is not measured
+yet: the report's "By tone" table is how it will be.
+
+**The report** (`POST /report {}`) is computed from the ledger, the pending `at` values in
+`notes.json` and `settings.json`; it stores nothing new.
+
+- A check line has a `points` key. A note is a check line with integer `points > 0` and non-empty
+  `kinds`; its kind is `kinds[0]`, its key its `at`.
+- A note's outcome is the first `feedback` line (a value in `SIGNALS`) or `gone` line whose
+  `check_at` equals its `at`; otherwise `open` if its `at` is still pending in `notes.json`, otherwise
+  `unrecorded` (notes from before 4.2.0, held in memory, and "Got it" before 4.2.0). Feedback values
+  outside `SIGNALS` are ignored. `filtered` counts check lines with a filtered point.
+- `skips` counts `skipped` lines by reason. `spend_usd` sums the finite, non-negative `cost_usd` of
+  check lines; `unpriced` counts check lines without one; `cost_per_asked_usd` is spend divided by
+  asked notes, null with none.
+- Old lines: a check line without `tone` (or with an unknown one) counts as `plain`, one without
+  `enabled` as every kind on (`checks_on`), a missing `model` as `unknown`, and a kind outside `KINDS`
+  (1.x and 2.x kinds such as `action` or `deadline`) under `other`. A non-JSON or non-object line is
+  skipped and counted in `unreadable_lines`.
+- Tables: by kind (in `PRIORITY` order, then `other` when any), by model (the route that answered)
+  and by tone (in `TONES` order), each with the outcomes `shown, filtered, asked, read, already_knew,
+  unsure, not_useful, open, evicted, chat_gone, unrecorded`; model and tone rows add checks, spend and
+  cost per asked note.
+
+**Suggestions — suggest only, never automatic.** For each kind that is on and not locked, take its
+rated notes (outcome `asked`, `already_knew` or `not_useful`; `read` and `unsure` count neither way)
+under the current model (the `model` of the newest check line that has one) and the saved tone,
+ordered by the time of their feedback line; keep the newest 20 (`SUGGEST_WINDOW`) and require at
+least 10 (`SUGGEST_MIN`). `negative` is `already_knew` plus `not_useful` in that window. The page
+offers "Turn off <kind>?" when the Wilson 95% lower bound (z = 1.96, `WILSON_Z`) of negative/rated
+is above 0.5 (`SUGGEST_BOUND`): 9/10 → 0.596 yes, 8/10 → 0.490 no, 12/15 → 0.548 yes, 15/20 → 0.531
+yes, 14/20 → 0.481 no. A model or tone change starts a new window. The bound keeps a small sample
+from acting on a few bad notes (https://www.evanmiller.org/how-not-to-sort-by-average-rating.html);
+Qodo mutes a rule only after enough recorded outcomes, "a single ignored suggestion isn't enough"
+(https://www.qodo.ai/blog/latest-updates-to-qodo-october-2026/), and Cursor Bugbot promotes and
+disables learned rules as signal accumulates, editable in the UI (https://cursor.com/blog/bugbot-learning).
+Nothing changes without a click: one user and small samples, and changing settings is the user's
+decision. "Turn off" sends `/settings` without the kind (reversible with its switch, so not a
+two-step action).
+
+**Why counts, not days.** Notes per kind are very uneven: in the text-free ledger of 2026-10-18 to
+2026-10-20 (375 checks, 199 notes, Sonnet 5.5 only) result had 97, overclaim 52, assumption 36,
+overreach 7, unanswered, irreversible and tradeoff 2 each, security 1, constraint and cost 0. A fixed
+two-week wait would act on one or two notes for a rare kind and wait needlessly for a frequent one.
+
+**Keep and the snooze.** "Keep" (`POST /keep {kind}`) saves `snoozed[kind]` = that kind's all-time
+rated count (any model or tone); its suggestion stays hidden until 10 more rated notes of the kind
+arrive (`SNOOZE_MORE`). Switching a kind back on snoozes it the same way, so an old window does not
+re-suggest it the moment it returns.
+
+**Buttons.** No button is removed now. After 30 more dismissals, a button used in under 5% of dismissals is a removal candidate; the user decides.
 
 ## What it does not do
 

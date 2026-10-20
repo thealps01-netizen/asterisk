@@ -7,10 +7,13 @@ Rules:
               `react...` (the loader rejects the whole plugin otherwise, and the plugin simply never
               appears)
   surface     the desktop half registers exactly two contributions — `area: COMPOSER_AREAS.top`
-              and `area: SESSION_ROW_AREAS.trailing`, each once — and no pane, page or nav row; it
-              reaches no network or storage of its own: its only doors are ctx.rest (its own
+              and `area: SESSION_ROW_AREAS.trailing`, each once — plus exactly one settings page
+              (`ctx.registerSettingsPage?.(`, feature-detected), and no pane, route page or nav row;
+              it reaches no network or storage of its own: its only doors are ctx.rest (its own
               backend), host.notify, host.openSession and host.composer.insertText (never submit,
               setDraft or getDraft: it puts text into an input and never sends)
+  container   the settings page sizes by the pane, not the window: desktop/plugin.js has no @media
+              width query and has `container-type:inline-size` and an `@container` rule
   theme       every var(--name) in desktop/plugin.js is a token the app declares (`--name:` in the
               core's apps/desktop/src/styles.css; core from --core, HERMES_CORE or
               <HERMES_HOME>/hermes-agent). A missing styles.css is a problem, never a skip.
@@ -53,7 +56,7 @@ HERE = Path(__file__).resolve().parent
 # (the desktop loader itself skips strings and comments).
 LOADER = re.compile(r"""(?<![\w.$-])(from\s*|import\s*\(\s*|import\s+)(['"])([^'"]+)\2""")
 FORBIDDEN = (r"\bfetch\(", r"XMLHttpRequest", r"localStorage", r"ctx\.storage", r"\bpanes\b", r"PANES_AREA",
-             r"registerSettingsPage", r"revealPane", r"window\.hermesDesktop", r"\.submit\(", r"setDraft", r"getDraft")
+             r"revealPane", r"window\.hermesDesktop", r"\.submit\(", r"setDraft", r"getDraft")
 AREAS = ("COMPOSER_AREAS.top", "SESSION_ROW_AREAS.trailing")
 NAME = "asterisk"
 
@@ -85,6 +88,11 @@ def audit(root: Path, installed: Path | None, core: Path) -> list[str]:
     areas = re.findall(r"\barea:\s*([^,}\s]+)", js)
     if sorted(areas) != sorted(AREAS) or len(re.findall(r"\bctx\.register\(", js)) != 2:
         problems.append(f"surface: the desktop half must register exactly {' and '.join(AREAS)}, each once (found {areas})")
+    pages = js.count("ctx.registerSettingsPage?.(")
+    if pages != 1:
+        problems.append(f"surface: the desktop half must register exactly one settings page with ctx.registerSettingsPage?.( (found {pages})")
+    if re.search(r"@media[^{]*(?:min|max)-width", js) or "container-type:inline-size" not in js or "@container" not in js:
+        problems.append("container: desktop/plugin.js must size by the pane (@container), not the window (@media)")
 
     styles = core / "apps" / "desktop" / "src" / "styles.css"
     if not styles.is_file():
