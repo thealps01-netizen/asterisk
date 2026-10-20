@@ -42,12 +42,30 @@ and records in the ledger, without any text, how it left:
 "Ask in chat" is on a note of the chat you are in; a note of another chat has "Open" instead, which
 opens that chat and keeps the note.
 
+## Settings
+
+Settings → Plugins → Asterisk. Changes are saved for the active profile and apply to the next check.
+
+- **What it looks for:** the ten kinds in their fixed priority order, each with a switch. Irreversible
+  step and Security risk are always on. A kind switched off is no longer asked of the model.
+- **How it talks:** Plain (the default), Friendly or Playful. The tone changes only the wording,
+  never which note you get; irreversible and security notes are always written plainly.
+- **How useful it is:** checks, notes, spend and cost per asked note, then tables by kind, by model
+  and by tone of how each note left: Shown, Filtered (written for a kind you switched off, not shown),
+  Asked, Read, Already knew, Not sure, Not useful, Open, Dropped (more than 50 notes were waiting),
+  Chat deleted and Unrecorded (from a version that did not record it). Computed from the ledger,
+  which holds no text.
+- **Suggestions:** when the last rated notes of a kind under the current model and tone are mostly
+  Not useful or Already knew (at least 10, and a 95% lower bound above one half), the page asks
+  "Turn off <kind>?" with **Turn off** and **Keep**. Nothing changes without your click; Keep hides
+  the question until 10 more rated notes of that kind. The rule is in `Docs/asterisk-notes.md`.
+
 ## Layout
 
 | Path | What |
 |---|---|
 | `desktop/plugin.js` | Desktop half: picks replies, calls the backend, shows the headline strip above the input and the sidebar dot |
-| `dashboard/plugin_api.py` | Backend: `POST /check`, `POST /dismiss`, `POST /notes`, `POST /status`, reading the turn, redaction and caps, the model call, the ledger, the pending notes |
+| `dashboard/plugin_api.py` | Backend: `POST /check`, `POST /dismiss`, `POST /notes`, `POST /status`, `POST /report`, `POST /settings`, `POST /keep`, reading the turn, redaction and caps, the model call, the ledger, the pending notes, the settings and the report |
 | `eval/compare_checkers.py` | Offline evaluation: 1.0.0 against this checker on past turns (opt-in, below) |
 | `plugin.yaml`, `dashboard/manifest.json`, `__init__.py` | Hermes plugin metadata |
 | `tests/` | Gates (below) |
@@ -105,8 +123,9 @@ CI runs every gate on Ubuntu and Windows against a pinned core revision (`CORE_S
 `.github/workflows/ci.yml`).
 
 For a reviewer's eyes, `node preview_strip.mjs` writes light and dark previews of the strip
-(`tests/.out/preview/{nous,everforest}-{light,dark}.html`) in the app's own CSS. It needs a built core
-desktop app (`apps/desktop/dist`), starts no app, and is not a gate.
+(`tests/.out/preview/{nous,everforest}-{light,dark}.html`) and of the settings page at 720px and
+360px (`tests/.out/preview/settings-{nous,everforest}-{light,dark}.html`) in the app's own CSS. It
+needs a built core desktop app (`apps/desktop/dist`), starts no app, and is not a gate.
 
 ## Offline evaluation
 
