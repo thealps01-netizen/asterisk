@@ -21,8 +21,8 @@
  * otherwise one line with that chat's title and "Open". A chevron folds the strip to its label; a new
  * note unfolds it. A note stays until one of the five buttons removes it, and each removal is recorded
  * (POST /dismiss with asked, read, already_knew, unsure or not_useful, no text). The sidebar row of a
- * chat with a pending note carries a dot in the accent (`sessionRow.trailing`). For the development
- * phase the backend keeps the pending notes, and they are restored (POST /notes) after a restart.
+ * chat with a pending note carries a dot in the accent (`sessionRow.trailing`). The backend keeps
+ * the pending notes, and they are restored (POST /notes) after a restart.
  * With a Hermes pet on screen it also says so in its bubble. Reduced motion: no stroke drawing and no
  * stagger.
  *

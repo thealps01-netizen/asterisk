@@ -66,7 +66,7 @@ Seams:
                block mode, and block mode appends after the draft (what "Ask in chat" relies on: it never
                sends and keeps the user's draft)
   storage      plugins.plugin_storage.plugin_data_dir(name) is <hermes home>/plugin-data/<name>, and it is
-               the documented public plugin storage (where the development-phase notes are kept)
+               the documented public plugin storage (where the pending notes are kept)
   settings     ctx.registerSettingsPage(page) exists and Settings -> Plugins renders a page's render as a
                component, and the plugin i18n hook carries t (the settings page and its labels)
 """

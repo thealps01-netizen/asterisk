@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.5.1 (2026-10-21)
+
+- Pending notes on disk are a lasting feature, no longer "for the development phase": the text of
+  each pending note stays in `plugin-data/asterisk/notes.json` until dismissed, as before.
+- `plugin.yaml` declares `requires_hermes: ">=0.21.6"`, the minimum the README states and CI tests,
+  so an older Hermes skips the plugin instead of loading it; `tests/audit_static.py` checks the two
+  agree.
+- README: a "What it reads, sends and writes" section, and the cost of Sonnet, Haiku and DeepSeek
+  measured on short made-up test turns.
+
 ## 4.5.0 (2026-10-20)
 
 - Tone changes only the headline. Playful's headline is now a real joke about the situation or the
