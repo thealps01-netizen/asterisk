@@ -1,6 +1,7 @@
 name: asterisk
 label: Asterisk
-version: 4.5.0
+version: 4.5.1
+requires_hermes: ">=0.21.6"
 description: >-
   Asterisk — after a turn in a chat you opened where the assistant used a tool that can change
   something, or wrote a long reply (3,000+ characters), a second model (the model you choose for it
@@ -11,7 +12,7 @@ description: >-
   security risk, a cost, a request left unanswered, work claimed but not done, something you said
   not to do, or something you did not ask for, and who decided it. Nothing to flag, nothing shown.
   About 75 checks per active day on one user's history (~$4 at 5.3 cents a check), against 14 for
-  4.0.0. Keeps a cost ledger without any text; during development, pending notes' text is kept on
-  disk until dismissed.
+  4.0.0. Keeps a cost ledger without any text; pending notes' text is kept on disk, on
+  your computer, until dismissed.
 author: Muhammed Enes Alpler
 kind: standalone

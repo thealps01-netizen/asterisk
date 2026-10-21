@@ -2,6 +2,6 @@
   "name": "asterisk",
   "label": "Asterisk",
   "description": "After a turn where the assistant used a tool that can change something, or wrote a long reply (3,000+ characters), a second model (the model you choose for it in Settings → Models) rereads the turn, with your last earlier messages as context, and names the one thing the reply did not plainly tell you (an unstated tradeoff, a doubtful result, an assumption, an irreversible step, a security risk, a cost, a request left unanswered, work claimed but not done, something you ruled out, something you did not ask for); nothing to flag, nothing shown. About 75 checks per active day on one user's history (~$4), against 14 for 4.0.0.",
-  "version": "4.5.0",
+  "version": "4.5.1",
   "api": "plugin_api.py"
 }

@@ -15,16 +15,34 @@ Each check costs about 5 cents on `claude-opus-5-5`: measured on 14 real turns f
 (2026-10-17), the mean was about $0.05 and the range about $0.02–0.08, against about $0.019 for 1.0.0
 on the same turns. On one user's history (30 days, 4 active days, 403 turns, counts only) the 4.0.0
 rule checked about 14 turns per active day (~$0.74) and this rule about 75 (~$4.0 at 5.3 cents a
-check); what a short-reply check costs is not measured. Other models are not measured: the cost and
-the quality of the points on them are unknown. Each check, and each skipped turn, is recorded
+check); what a short-reply check costs is not measured. Other models were tried only on short
+made-up test turns (10 checks each, 2026-10-21), not on real chats: `claude-sonnet-5-5` about 1.1
+cents a check, `claude-haiku-4-5` about 0.4 and `deepseek-v4-flash` about 0.06; real turns are
+longer, so each costs more there. On those test turns Sonnet and DeepSeek wrote no number the turn
+did not state; Haiku did in 5 of 10 first drafts, and the backend took each one out (see
+`Docs/asterisk-notes.md` → "Numbers the turn does not state"). Each check, and each skipped turn, is recorded
 (without any text) in a ledger. See `Docs/asterisk-notes.md` for how it works, the cost and the
 review.
 
-For the development phase, while the notes' usefulness is measured, the text of each pending note
-(headline, sentence, chat title, model and cost) is kept on disk in
-`plugin-data/asterisk/notes.json` in your Hermes home until you dismiss it, so notes survive an app
-restart. It is separate from the ledger, which holds no text, and it is left there on uninstall
-(delete it by hand). This will be turned off later.
+Pending notes survive an app restart: the text of each pending note (headline, sentence, chat title,
+model and cost) is kept on disk in `plugin-data/asterisk/notes.json` in your Hermes home until you
+dismiss it, at most 50 notes (past that the oldest is dropped). Asterisk sends it nowhere. It is
+separate from the ledger, which holds no text, and it is left there on uninstall (delete it by hand).
+
+## What it reads, sends and writes
+
+- **Reads:** from the active profile's own chat store, read-only, the rows of the turn being checked
+  and up to 5 of your earlier messages in that chat; with a note, the chat's title. When upgrading
+  from 2.x, once, the old package's ledger. It reads no files of your projects, no `.env`, no
+  credentials.
+- **Sends:** that turn, after Hermes's own secret redaction and capped (the turn at most 32,000
+  characters, the earlier messages at most 2,000), to the provider of the model you choose for
+  Asterisk in Settings → Models. Until you choose one, nothing is sent. Each check is a paid call
+  on your account with that provider. No other network call, no telemetry.
+- **Writes:** in your Hermes home, the ledger (`state/asterisk/ledger.jsonl`, no text), the pending
+  notes (`plugin-data/asterisk/notes.json`) and the settings (`plugin-data/asterisk/settings.json`).
+- **Runs:** no shell commands and no background process of its own; the check runs inside Hermes
+  after each reply.
 
 ## Dismissing a note
 
@@ -77,7 +95,9 @@ Settings → Plugins → Asterisk. Changes are saved for the active profile and 
 
 Needs Hermes v0.21.6 or later (its `message.complete` frames carry the turn's row ids). CI runs the
 backend on every stable Hermes release from v0.21.6 on with a fake model (`tests/core_smoke.py`); the
-desktop half is checked against each release's SDK source, not run inside each release's app. In the Hermes
+desktop half is checked against each release's SDK source, not run inside each release's app.
+`plugin.yaml` declares `requires_hermes: ">=0.21.6"`, so an older Hermes skips the plugin instead of
+loading it. In the Hermes
 app, no terminal:
 
 1. Open Capabilities → Plugins and click **Install from Git**.

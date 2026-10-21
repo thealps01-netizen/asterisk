@@ -118,8 +118,8 @@ Hermes' own extension points.
    The fold is not stored. A note stays until "Ask in chat", "Got it", "Already knew", "Not sure" or
    "Not useful" removes it, in one click; each removal posts `POST /dismiss {check_at, signal}` with
    the signal `asked`, `read`, `already_knew`, `unsure` or `not_useful`. The sidebar row of a chat with a pending note carries a dot in the accent
-   (`sessionRow.trailing`). Pending notes survive an app restart during the development phase (see
-   "Notes on disk (development phase)"). Colours come from the app's theme tokens
+   (`sessionRow.trailing`). Pending notes survive an app restart (see
+   "Notes on disk"). Colours come from the app's theme tokens
    only, so the strip follows the theme in light and dark; under reduced motion the stroke is shown
    drawn and nothing animates. No point, no note. A failed check is still one error toast.
 
@@ -193,10 +193,10 @@ lines, each counted against checks with a point; `not_useful` counts the false a
 offline evaluation run (README → "Offline evaluation"): tick "useful" or "noise" per point. If the
 points are mostly noise, turn the plugin off — it is opt-in value, not a safety layer.
 
-## Notes on disk (development phase)
+## Notes on disk
 
-For the development phase, while the notes' usefulness is measured, pending notes survive an app
-restart. The backend keeps the text of each pending note — headline, sentence, chat title, model,
+Pending notes survive an app restart. Up to 4.5.0 this was kept for the development phase only; from
+4.5.1 it stays, because a note lost on restart is a note never rated. The backend keeps the text of each pending note — headline, sentence, chat title, model,
 cost and who decided, plus the chat's id and the check's `at` — in
 `<HERMES_HOME>/plugin-data/asterisk/notes.json` (the host's plugin storage,
 `plugins.plugin_storage.plugin_data_dir`, so it follows the active profile), apart from the ledger,

@@ -170,6 +170,8 @@ MUTATIONS = [
      " /apps/desktop/src/contrib/settings-pages.ts", ""),
     ("README's minimum Hermes is not a tested core", "README.md", "Needs Hermes v0.21.6 or later",
      "Needs Hermes v0.21.5 or later"),
+    ("plugin.yaml's requires_hermes is not README.md's minimum", "plugin.yaml", 'requires_hermes: ">=0.21.6"',
+     'requires_hermes: ">=0.21.5"'),
     ("CI stops running the backend on real cores", CI,
      'python core_smoke.py --core "$CORE" && python core_smoke.py --core "$CORE" --selftest', "python core_smoke.py --help"),
     # the upgrade from 2.x

@@ -39,11 +39,12 @@ Rules:
   sparse      every core file tests/contract_core.py reads (FILES) is in ci.yml's sparse checkout of
               the core; a local run reads the full core, so a missing path only fails in CI
   versions    the minimum Hermes version README.md states is a core in ci.yml's core-versions matrix,
-              and that job runs core_smoke.py and its selftest (a stated minimum is a tested one)
-  notes       the development-phase note store: plugin_api.py takes plugin_data_dir from the host once,
-              names NOTES_FILE = "notes.json" and a NOTES_MAX, keeps the ledger in state/asterisk/, and
-              the notes (plugin-data/asterisk/notes.json, "at most <NOTES_MAX> notes", "development
-              phase") and README.md ("development phase") say the note text is kept on disk
+              and that job runs core_smoke.py and its selftest (a stated minimum is a tested one);
+              plugin.yaml's requires_hermes is that same minimum
+  notes       the note store: plugin_api.py takes plugin_data_dir from the host once, names
+              NOTES_FILE = "notes.json" and a NOTES_MAX, keeps the ledger in state/asterisk/, and the
+              notes (plugin-data/asterisk/notes.json, "at most <NOTES_MAX> notes") and README.md
+              (plugin-data/asterisk/notes.json) say the note text is kept on disk
   installed   the desktop copy the app loads equals desktop/plugin.js (only when it exists here)
 """
 from __future__ import annotations
@@ -184,6 +185,9 @@ def audit(root: Path, installed: Path | None, core: Path) -> list[str]:
         problems.append("versions: README.md does not state the minimum Hermes version (\"Needs Hermes vX.Y.Z or later\")")
     elif f"name: {stated.group(1)}, sha: " not in ci:
         problems.append(f"versions: README.md's minimum {stated.group(1)} is not a core in ci.yml's core-versions matrix")
+    floor_spec = re.search(r'^requires_hermes: ">=(\d+\.\d+\.\d+)"$', yaml_text, re.M)
+    if stated and (not floor_spec or f"v{floor_spec.group(1)}" != stated.group(1)):
+        problems.append("versions: plugin.yaml's requires_hermes is not README.md's minimum Hermes version")
     if 'python core_smoke.py --core "$CORE" && python core_smoke.py --core "$CORE" --selftest' not in ci:
         problems.append("versions: ci.yml does not run core_smoke.py (and its selftest) on the real cores")
 
@@ -199,11 +203,10 @@ def audit(root: Path, installed: Path | None, core: Path) -> list[str]:
         problems.append("notes: plugin_api.py has no NOTES_MAX — the stored notes have no cap")
     elif f"at most {int(notes_max.group(1))} notes" not in notes:
         problems.append("notes: the notes do not state NOTES_MAX as the backend has it")
-    for needle in ("plugin-data/asterisk/notes.json", "development phase"):
-        if needle not in notes:
-            problems.append(f"notes: Docs/asterisk-notes.md does not say {needle!r} — the stored note text must be documented")
-    if "development phase" not in (root / "README.md").read_text(encoding="utf-8"):
-        problems.append("notes: README.md does not say the note text is kept on disk for the development phase")
+    if "plugin-data/asterisk/notes.json" not in notes:
+        problems.append("notes: Docs/asterisk-notes.md does not say 'plugin-data/asterisk/notes.json' — the stored note text must be documented")
+    if "plugin-data/asterisk/notes.json" not in (root / "README.md").read_text(encoding="utf-8"):
+        problems.append("notes: README.md does not say the note text is kept on disk (plugin-data/asterisk/notes.json)")
 
     if installed and installed.exists() and installed.read_bytes() != (root / "desktop" / "plugin.js").read_bytes():
         problems.append(f"installed: {installed} differs from desktop/plugin.js — reinstall, the app loads that copy")
