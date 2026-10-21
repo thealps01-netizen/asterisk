@@ -65,7 +65,8 @@
  *          chat] [Got it]; a single note of another chat [Already knew] [Not sure] [Not useful]
  *          [Open] [Got it]; a one-line note [Open] only.
  *      (b) Ask in chat: one host.composer.insertText(the note's storedId, "Asterisk: <headline> —
- *          <text>", { mode: 'block' }); true -> the note leaves and /dismiss { check_at, signal:
+ *          <text>", { mode: 'block' }), a Playful note's kind label in place of its headline (an
+ *          unknown kind keeps the headline); true -> the note leaves and /dismiss { check_at, signal:
  *          'asked' } is posted; false or a throw -> the note stays, nothing posted, one
  *          asterisk-ask-failed warning; two clicks while pending -> one call; long text in full.
  *      (c) Got it posts signal 'read', Already knew 'already_knew'; a failed post names the button.
@@ -620,6 +621,16 @@ check(strip.el.innerHTML === '' && rest.length === postsAsk + 1 && same(rest.at(
 check(ins.every(c => c[0] === 'st-3' && c[1] === ASK && same(c[2], { mode: 'block' })) && ASK.includes(AH) && ASK.includes(AT) && ASK.length === AH.length + AT.length + 13,
   `23b. a long headline and sentence are inserted in full, as "Asterisk: <headline> — <text>" (${ins.map(c => c[1].length)} chars)`)
 
+// 23b. a Playful note asks with its kind's label, never its joke; an unknown kind keeps the headline
+const PLAY_TEXT = 'You asked for the typo fix; README.md was never edited and the reply says it is done.'
+for (const [kind, lead, at, row] of [['unanswered', 'Left unanswered', 5050.5, 1260], ['constructor', 'The typo survived the cleanup', 5060.5, 1270]]) {
+  reply = { points: [point('The typo survived the cleanup', PLAY_TEXT, 'assistant', kind)], cost_usd: 0.01, cost_status: 'estimated', model: 'fake-model-x', at, title: 'Ask chat', tone: 'playful' }
+  await emit('rt-3', frame(`playful ${kind}`, row))
+  await click(button(strip.el, 'Ask in chat'))
+  check(same(ins.at(-1), ['st-3', `Asterisk: ${lead} — ${PLAY_TEXT}`, { mode: 'block' }]) && strip.el.innerHTML === '',
+    `23b. a Playful ${kind} note inserts "Asterisk: ${lead} — <text>" and leaves (${JSON.stringify(ins.at(-1)?.[1])})`)
+}
+
 // 23c. a failed /dismiss from "Got it" names its button
 reply = { points: [point('Got it fails', 'The assistant left the cache warm without saying so.')], cost_usd: 0.01, cost_status: 'estimated', model: 'fake-model-x', at: 5100.5, title: null }
 await emit('rt-3', frame('gotit fails', 210))
@@ -708,9 +719,9 @@ check(unpriced?.cost === '' && unpriced?.model === '' && mod.t('asterisk.meta', 
 check(mod.t('asterisk.meta', '', 'decided by you', '', '') === 'decided by you' && mod.t('asterisk.from', 'Chat', '', '') === 'Chat'
   && mod.t('asterisk.from', 'Chat', '~$0.02', '') === 'Chat · ~$0.02' && mod.t('asterisk.meta', '~$0.02', 'decided by you', 'Chat', '') === 'Chat · ~$0.02 · decided by you',
   'without a model the meta and the one-line note name no model and leave no stray separator')
-check(mod.noteFor({ points: [], at: 1 }, { key: 'k' }) === null && same(Object.keys(unpriced).sort(), ['by', 'checkAt', 'cost', 'headline', 'id', 'model', 'storedId', 'text', 'title'])
+check(mod.noteFor({ points: [], at: 1 }, { key: 'k' }) === null && same(Object.keys(unpriced).sort(), ['by', 'checkAt', 'cost', 'headline', 'id', 'kind', 'model', 'storedId', 'text', 'title', 'tone'])
   && mod.noteFor({ points: [point('H', 'T')], model: 'fake-model-x', at: 5 }, { key: 'k' })?.model === 'fake-model-x',
-  'no points -> no note; a note is { id, storedId, title, headline, text, by, cost, model, checkAt }')
+  'no points -> no note; a note is { id, storedId, title, headline, text, by, kind, tone, cost, model, checkAt }')
 
 // 9. no asterisk
 const GLYPHS = /[\u2042\u204E\u2051\u2217\u2722-\u2727\u2731-\u273D\u2749-\u274B\uFE61\uFF0A]/u
@@ -861,9 +872,9 @@ for (const [name, opts] of [['SESSION_ROW_AREAS', { rows: false }], ['COMPOSER_A
 }
 
 // 23e. restart: a second registration (a fresh ctx) restores the backend's pending notes
-const KEYS14 = ['at', 'cost_status', 'cost_usd', 'model', 'points', 'session_id', 'title']
+const KEYS14 = ['at', 'cost_status', 'cost_usd', 'model', 'points', 'session_id', 'title', 'tone']
 const stored = (session_id, at, headline, sentence, title = null) => ({ session_id, at, title, model: 'fake-model-x', cost_usd: 0.0213, cost_status: 'estimated',
-  points: [{ kind: 'tradeoff', by: 'assistant', headline, text: sentence }] })
+  points: [{ kind: 'tradeoff', by: 'assistant', headline, text: sentence }], tone: 'plain' })
 const READY = { ready: true, update_notice: false, old_install: false }
 const E1 = stored('st-5', 7100.5, 'Restored first', 'The assistant reused the old token without saying it expires today.', 'Old chat')
 const E2 = stored('st-4', 7200.5, 'Restored second', 'The assistant skipped the slow tests without saying so.', 'Focused chat')

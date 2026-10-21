@@ -107,7 +107,9 @@ Hermes' own extension points.
    "Ask in chat" (focused chat's note only) puts the note into that chat's input through
    `host.composer.insertText`, addressed by the note's own chat id (never "whichever composer has
    focus"), in block mode: after the user's draft, separated by a blank line, so the draft is kept.
-   The text is exactly `Asterisk: <headline> — <sentence>`, both in full. It never sends: no turn on
+   The text is exactly `Asterisk: <headline> — <sentence>`, both in full; a Playful note puts its
+   kind's label ("Left unanswered") in place of the headline, so the joke never goes into the chat
+   (a note stored before 4.5.0 has no tone and keeps its headline). It never sends: no turn on
    the main model starts until the user presses send. When the insert succeeds the note leaves the
    strip; when it fails (that chat's input is not on screen) the note stays and one warning says to
    click into the input and try again. A second click while an insert is pending does nothing.
@@ -157,7 +159,9 @@ seconds, `points` (0 or 1), `kinds`, `by` (null,
 `assistant` or `user`), `turn_chars`, `tool_results`, `truncated`, `turn_complete` (the receipt's
 own flag), `earlier_chars` (the length of the earlier-messages block, 0 when none), `tone` and
 `enabled` (the saved tone and the kinds that were on, ids only; `filtered` when a point of a kind
-switched off was dropped). Never any
+switched off was dropped), `prompt` (the prompt revision, 2 from 4.5.0) and `numbers` when a number
+the turn does not state was taken out (`option`, `rewritten` or `failed`, see "Numbers the turn does
+not state"). Never any
 text: not the turn, not an earlier message, not the reply, not the point, its headline or the
 chat's title. A skipped turn writes `{at, skipped}` with its reason (a check line's `chars` under
 3,000 marks a tool-triggered check). A failed call writes no line; an unreadable answer writes one with `"points": null, "error":
@@ -252,11 +256,24 @@ priority list (an empty group is dropped and the rest renumbered) and its id in 
 is filtered: no note, no notice, and the check line records `"filtered": [<kind>]` with `kinds` `[]`,
 so the report counts it instead of losing it. An id outside `KINDS` is still unreadable (502).
 
-**Tone.** Plain adds nothing: with no settings saved the prompt is byte-identical to 4.3.0
-(`SYSTEM_PROMPT = system_prompt("plain", KINDS)`). Friendly and Playful each add one rule after the
-headline rule (the text is in `system_prompt`'s `_TONE_LINES`). Each says the tone changes only the
-wording, never whether there is a point, which point or its kind, and that an irreversible or
-security point is always written plainly. There is no free-text tone: it would put the user's text
+**Tone.** Plain adds nothing (`SYSTEM_PROMPT = system_prompt("plain", KINDS)`). Friendly and Playful
+each add one rule after the headline rule (the text is in `system_prompt`'s `_TONE_LINES`). From 4.5.0
+the tone changes only the headline: the sentence stays plain and exact in every tone, and each rule
+says the tone never changes whether there is a point, which point or its kind, and that an
+irreversible or security point is always written plainly. Friendly writes a warm headline. Playful
+writes a joke headline: built on one concrete detail of the turn (a file name, a command, a value, a
+phrase from the reply), irony or comic understatement, aimed at the situation or the assistant, never
+at the user, true; three example headlines from other turns set the register. The model writes four
+`headline_options` first and picks the most surprising true one, never simply the first written.
+Why this shape, from the 2026-10-20 trials (Sonnet, two hand-made turns, 5 calls per variant, about
+$0.58 in all): "a light, witty touch" gave mild headlines and made up a file count ("50 files" for 47
+in 4 of 5); a deadpan news-desk persona came out flat; with four candidates the model wrote funny
+ones but picked the first, safest one until the rule said "most surprising, never the first" (then 7
+of 10 picks were not the first). Brands that joke keep the joke in the mascot and the instructions
+plain (Duolingo), and humour generation research finds choosing the best of many candidates is the
+hard part (SemEval-2026 humour task, https://aclanthology.org/2026.semeval-1.15.pdf). "Ask in chat"
+sends the kind's label instead of a Playful headline. Playful notes rated before prompt revision 2
+do not count toward its suggestions (the style they rated is gone). There is no free-text tone: it would put the user's text
 into the checker's instructions. The presets follow CodeRabbit's `tone_instructions`
 (https://docs.coderabbit.ai/reference/configuration) and the NN/g tone dimensions
 (https://www.nngroup.com/articles/tone-of-voice-dimensions/); the plain-writing rule follows the
@@ -264,6 +281,24 @@ finding that humour lowered short-term trust in an AI conveying information
 (https://jcom.sissa.it/article/pubid/JCOM_2406_2025_A04/) and that humour in repeated warnings reads
 as sarcasm (German UPA error-message heuristics). Whether a tone changes usefulness is not measured
 yet: the report's "By tone" table is how it will be.
+
+**Numbers the turn does not state.** In the 2026-10-20 trials the model rounded a count it did not
+read: on a turn that wrote 47 files, the Plain prompt (the 4.4.0 prompt, unchanged) wrote "about 50
+scratch files" in 2 of 5 sentences, and once "which likely breaks them" about files the turn never
+ran; so the fault is the checker's, not a tone's. From 4.5.0 every tone's rules say a number in the
+headline or the sentence is one the turn states or a count of at most ten things it names (any other
+count is a word such as "dozens"), and never to state an outcome the turn does not show. The backend
+then checks: every number in the headline and the sentence (digits, and English spelled numbers from
+eleven to ninety-nine) that is not a whole number of at most 10 (`SMALL_COUNT`) must appear in the
+text the model read (the redacted turn and the earlier block). When one does not: a Playful headline is
+swapped for the first of its `headline_options` without one (no call, `numbers: "option"`); otherwise
+one more call sends the first messages, the first answer and `NUMBERS_RULE` naming the numbers, and a
+clean point of the same kind replaces the first (`"rewritten"`, its tokens and cost added to the
+check's). A rewrite that fails, errs, changes the kind or still has one leaves the first point
+(`"failed"`): a right warning with a wrong count beats no warning. Replacing the number in code
+was rejected: the note is in the reply's language, and "dozens" in a Turkish sentence is broken. The
+extra call costs about as much as a check (~1.5 cents on Sonnet) and runs only when needed. Not
+covered: spelled numbers in other languages, and outcomes such as "breaks" (the prompt rule only).
 
 **The report** (`POST /report {}`) is computed from the ledger, the pending `at` values in
 `notes.json` and `settings.json`; it stores nothing new.
@@ -293,7 +328,8 @@ ordered by the time of their feedback line; keep the newest 20 (`SUGGEST_WINDOW`
 least 10 (`SUGGEST_MIN`). `negative` is `already_knew` plus `not_useful` in that window. The page
 offers "Turn off <kind>?" when the Wilson 95% lower bound (z = 1.96, `WILSON_Z`) of negative/rated
 is above 0.5 (`SUGGEST_BOUND`): 9/10 → 0.596 yes, 8/10 → 0.490 no, 12/15 → 0.548 yes, 15/20 → 0.531
-yes, 14/20 → 0.481 no. A model or tone change starts a new window. The bound keeps a small sample
+yes, 14/20 → 0.481 no. A model or tone change starts a new window, and so does Playful's new prompt
+(`TONE_SINCE`: its notes from before `prompt` 2 are left out). The bound keeps a small sample
 from acting on a few bad notes (https://www.evanmiller.org/how-not-to-sort-by-average-rating.html);
 Qodo mutes a rule only after enough recorded outcomes, "a single ignored suggestion isn't enough"
 (https://www.qodo.ai/blog/latest-updates-to-qodo-october-2026/), and Cursor Bugbot promotes and

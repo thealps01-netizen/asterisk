@@ -1,6 +1,6 @@
 name: asterisk
 label: Asterisk
-version: 4.4.0
+version: 4.5.0
 description: >-
   Asterisk — after a turn in a chat you opened where the assistant used a tool that can change
   something, or wrote a long reply (3,000+ characters), a second model (the model you choose for it

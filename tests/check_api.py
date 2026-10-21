@@ -65,7 +65,7 @@ Locks:
      imported) and only then the backend loaded; no model call, exit 0, sizes per turn printed
      (earlier_chars included), only the turns the backend's needs_check keeps, no file written. Its
      markdown names the headline before the point.
- 13. A check's response is exactly {points, cost_usd, cost_status, chars, at, title, model}: `at` is
+ 13. A check's response is exactly {points, cost_usd, cost_status, chars, at, title, model, tone}: `at` is
      the check's ledger time; the title is read (read-only store, get_session_title) only when there
      is a point; a title that cannot be read, or a blank one, is null and the point stays. A skip's
      response is exactly {points: [], skipped}.
@@ -114,7 +114,7 @@ Locks:
      -> no block and the check still runs; no earlier rows -> the 4.0.0 user message exactly.
  22. Notes on disk (development phase), each part in a fresh profile home:
      (a) restart survival: a check with a point writes plugin-data/asterisk/notes.json holding exactly
-         one entry {session_id, at, title, model, cost_usd, cost_status, points} with the full headline
+         one entry {session_id, at, title, model, cost_usd, cost_status, points, tone} with the full headline
          and text; plugin_api.py loaded a second time under another module name (same HERMES_HOME)
          answers /notes with that entry unchanged; a check with no point and a skip write no entry;
      (b) /dismiss {check_at, signal} for asked, read, already_knew, unsure and not_useful appends
@@ -130,6 +130,23 @@ Locks:
          non-list file answers []; a failing notes write changes neither the answer nor the ledger;
      (f) no ledger holds a note's headline, text or title; the notes file is under plugin-data/asterisk/
          and state/ holds no notes.json.
+26. Numbers the turn does not state (4.5.0), on the turn the model saw (the redacted turn and the
+    earlier block): a number in the headline or the sentence that is neither in that text nor a whole
+    number of at most 10 (digits, or an English spelled number from eleven to ninety-nine) is taken
+    out, every tone alike:
+     (a) the detector: "about 50 files" against a turn holding 47 names 50; "line 3", "three files",
+         "4.8G" and "forty-seven" (47 in the turn) name nothing; "Fifty files" names "Fifty";
+     (b) a Playful answer whose headline has one and whose headline_options hold one without: that
+         option is the headline (cut to 80), one model call, the ledger line has numbers "option", the
+         point stays {kind, by, headline, text};
+     (c) otherwise one more call: the first messages, the first answer as the assistant, then the
+         rule naming the numbers; a clean point of the same kind replaces the first, tokens and cost
+         are summed, numbers "rewritten";
+     (d) a rewrite that still has one, changes the kind, is unreadable, or raises: the first point
+         stays, numbers "failed", the check answers 200;
+     (e) a point without such a number, and a point of a kind switched off: one call, no numbers key;
+     (f) no ledger line holds the numbers' text; every check line has prompt 2;
+     (g) suggestions: Playful notes rated before prompt 2 do not count for Playful; Plain ones do.
 """
 from __future__ import annotations
 
@@ -162,6 +179,7 @@ def check(ok: bool, what: str) -> None:
 # ── fakes for the core ───────────────────────────────────────────────────────
 class Fake:
     answer = '{"points": []}'
+    answers: list = []
     raises: Exception | None = None
     calls: list[dict] = []
     price_raises = False
@@ -189,10 +207,13 @@ def call_llm(**kwargs):
     Fake.calls.append(kwargs)
     if Fake.raises:
         raise Fake.raises
+    answer = Fake.answers.pop(0) if Fake.answers else Fake.answer
+    if isinstance(answer, Exception):
+        raise answer
     if isinstance(kwargs.get("route_info"), dict):
         kwargs["route_info"].update(ROUTED)
     usage = types.SimpleNamespace(prompt_tokens=2500, completion_tokens=300, total_tokens=2800)
-    return types.SimpleNamespace(model=ROUTED["model"], usage=usage, answer=Fake.answer)
+    return types.SimpleNamespace(model=ROUTED["model"], usage=usage, answer=answer)
 
 
 def extract_content_or_reasoning(response, **_):
@@ -422,6 +443,9 @@ the one that matters most to the user.
 Rules:
 - Never restate what the reply already says clearly. If the reply says it, it is not a point.
 - Only what the turn shows. Never invent, never add your own advice.
+- Every number in the headline and the sentence is one the turn states, or a count of at most ten
+  things the turn names; any other count is a word such as "dozens". Never state an outcome the turn
+  does not show, such as that something now breaks or will fail.
 - The earlier messages are context only: use them to see what the user asked for or ruled out before
   this turn. Never make a point about an earlier turn itself.
 - Most turns have nothing to flag. Then return no point; that is the normal answer.
@@ -562,21 +586,21 @@ check("FAKE-SECRET" not in user and user.count("***") == 5,
 check(Redact.calls and all(c.get("force") is True and c.get("redact_url_credentials") is True for c in Redact.calls),
       f"every piece is redacted with force=True, redact_url_credentials=True ({len(Redact.calls)} calls)")
 check(out == {"points": [], "cost_usd": 0.02, "cost_status": "estimated", "chars": len(REPLY), "at": ledger()[-1]["at"], "title": None,
-             "model": "routed-model-x"},
+             "model": "routed-model-x", "tone": "plain"},
       f"a fenced 'nothing to flag' is read: points == [], cost from the chat-shaped usage, priced, at, no title, the model that answered ({out})")
 check(Fake.priced[-1:] == [("routed-model-x", "anthropic")] and out["model"] == "routed-model-x",
       f"16e. the cost is priced for the route that answered (routed-model-x), not the chosen one ({Fake.priced[-1:]})")
 check(Store.title_reads == [] and len(Store.opened) == 1, f"nothing to flag: the title is not read, the store opened once ({Store.title_reads})")
 row = ledger()[-1] if ledger() else {}
 want = {"at", "chars", "provider", "model", "input_tokens", "output_tokens", "cost_usd", "cost_status", "seconds", "points", "kinds", "by",
-        "turn_chars", "tool_results", "truncated", "turn_complete", "earlier_chars", "tone", "enabled"}
+        "turn_chars", "tool_results", "truncated", "turn_complete", "earlier_chars", "tone", "enabled", "prompt"}
 earlier_block = user[len(EARLIER_HEAD):user.index("\n\nThe turn, oldest first:")]
 turn_part = user[user.index("<turn>\n"):user.rindex("\n\n" + api.LANGUAGE_RULE)]
 check(set(row) == want and row["points"] == 0 and row["kinds"] == [] and row["by"] is None and row["tool_results"] == 2
       and row["truncated"] is False and row["turn_complete"] is True and row["turn_chars"] == len(turn_part)
-      and row["earlier_chars"] == len(earlier_block) and row["tone"] == "plain" and row["enabled"] == list(api.KINDS)
+      and row["earlier_chars"] == len(earlier_block) and row["tone"] == "plain" and row["enabled"] == list(api.KINDS) and row["prompt"] == 2
       and row["chars"] == len(REPLY) and row["input_tokens"] == 2500 and row["cost_usd"] == 0.02,
-      f"24h. the ledger line has 4.0.0's fields plus earlier_chars, tone and enabled; zero points is points: 0 ({row})")
+      f"24h. the ledger line has 4.0.0's fields plus earlier_chars, tone, enabled and prompt 2; zero points is points: 0 ({row})")
 check(row.get("provider") == "anthropic" and row.get("model") == "routed-model-x",
       f"16e. the ledger names the provider and model that answered, not the chosen one ({row.get('provider')}, {row.get('model')})")
 
@@ -591,8 +615,9 @@ check(p.get("text", "").startswith("The assistant picked the blue-green") and le
       "whitespace is collapsed and a long point is cut to 240 with an ellipsis")
 check(p.get("headline") == HEADLINE + " now" and list(p) == ["kind", "by", "headline", "text"],
       f"the headline comes back whitespace-collapsed; a point is {{kind, by, headline, text}} ({p})")
-check(sorted(out) == sorted(["points", "cost_usd", "cost_status", "chars", "at", "title", "model"]) and out["at"] == ledger()[-1]["at"] == 1000.0,
-      f"16f. the response keys are exactly points, cost_usd, cost_status, chars, at, title, model; at equals the ledger line's at ({sorted(out)})")
+check(sorted(out) == sorted(["points", "cost_usd", "cost_status", "chars", "at", "title", "model", "tone"]) and out["at"] == ledger()[-1]["at"] == 1000.0
+      and out["tone"] == "plain",
+      f"16f. the response keys are exactly points, cost_usd, cost_status, chars, at, title, model, tone; at equals the ledger line's at ({sorted(out)})")
 check(out["title"] == "TITLE-MARKER deploy plan" and Store.title_reads[-1:] == ["st-1"] and len(Store.opened) == opened + 2
       and Store.opened[-1] == {"db_path": None, "read_only": True},
       f"with a point the chat's title is read (read-only, a second store open) and returned ({out['title']!r})")
@@ -1132,7 +1157,7 @@ NOTE_HEADLINE = ("NOTE-HEADLINE-MARKER " + "h" * 80)[:80]
 NOTE_TEXT = ("NOTE-TEXT-MARKER " + "t" * 240)[:240]
 NOTE_POINT = json.dumps({"points": [{"kind": "tradeoff", "by": "assistant", "language": "English", "headline": NOTE_HEADLINE,
                                      "text": NOTE_TEXT}]})
-NOTE_KEYS = {"session_id", "at", "title", "model", "cost_usd", "cost_status", "points"}
+NOTE_KEYS = {"session_id", "at", "title", "model", "cost_usd", "cost_status", "points", "tone"}
 note_homes: list[Path] = []
 
 
@@ -1309,14 +1334,22 @@ check(not misplaced and not (home / "state" / "asterisk" / "notes.json").exists(
       and notes_path(h5).parent == h5 / "plugin-data" / "asterisk",
       f"22f. the notes file is under plugin-data/asterisk/ and state/ holds no notes.json ({misplaced})")
 # 25. Settings: tone, enabled kinds, the report and its suggestions (POST /report, /settings, /keep)
-FRIENDLY_LINES = """- Tone: friendly. Write the headline and the sentence the way a helpful colleague would say it: warm,
-  everyday words, no jargon, no exclamation marks. The tone changes only the wording, never whether there
-  is a point, which point or its kind. An irreversible or security point is always written plainly.
+FRIENDLY_LINES = """- Tone: friendly. Write the headline the way a helpful colleague would say it: warm, everyday words, no
+  jargon, no exclamation marks. The sentence stays plain and exact. The tone changes only the headline's
+  wording, never whether there is a point, which point or its kind. An irreversible or security point is
+  always written plainly.
 """
-PLAYFUL_LINES = """- Tone: playful. Write the headline and the sentence with a light, witty touch: a gentle turn of
-  phrase, never sarcasm and never a joke at the user's expense; the facts stay exact. The tone changes only
-  the wording, never whether there is a point, which point or its kind. An irreversible or security point
-  is always written plainly, with no wit.
+PLAYFUL_LINES = """- Tone: playful. The headline is a joke built on one concrete detail the turn shows (a file name, a
+  command, a value, a phrase from the reply): irony or comic understatement, aimed at the situation or
+  the assistant, never at the user. What it says stays true. Examples from other turns, for the
+  register only: "All tests pass, mostly by not running", "SQLite moved in while nobody was looking",
+  "It's 9 a.m. somewhere: the assistant picked UTC". Right before "headline", add "headline_options":
+  four candidate headlines, each from a different angle; then "headline" is the most surprising of them
+  that is true and keeps every rule above: never simply the first one written, and never the one that
+  only repeats the reply's own words. The sentence stays plain and exact, with no joke. The tone changes
+  only the headline's wording, never whether there is a point, which point or its kind. An irreversible
+  or security point is always written plainly, headline included, with no wit, and has no
+  "headline_options".
 """
 HEADLINE_END = "  the final reply's language.\n"
 FOUR_OFF = ("cost", "tradeoff", "assumption", "overreach")
@@ -1335,7 +1368,7 @@ four_off = four_off.replace("<one of: tradeoff, result, assumption, irreversible
                             "<one of: result, irreversible, security, unanswered, overclaim, constraint>")
 check(api.system_prompt("friendly", api.KINDS) == APPROVED_PROMPT.replace(HEADLINE_END, HEADLINE_END + FRIENDLY_LINES, 1)
       and api.system_prompt("playful", api.KINDS) == APPROVED_PROMPT.replace(HEADLINE_END, HEADLINE_END + PLAYFUL_LINES, 1),
-      "25a. friendly and playful insert their tone lines after the headline rule, the rest byte-identical to 4.3.0")
+      "25a. friendly and playful insert their tone lines after the headline rule, the rest byte-identical to the approved prompt")
 check(api.system_prompt("plain", [k for k in api.KINDS if k not in FOUR_OFF]) == four_off,
       "25a. four kinds off: their bullets, group entries and template ids are gone; the empty group is dropped and the rest renumbered")
 check(api.system_prompt("plain", api.KINDS) == api.SYSTEM_PROMPT == APPROVED_PROMPT and api.TONES == ("plain", "friendly", "playful")
@@ -1515,11 +1548,11 @@ check([round(api._wilson_low(n, r), 3) for n, r in ((9, 10), (8, 10), (12, 15), 
       "25h. the Wilson lower bounds: 9/10 0.596, 8/10 0.490, 12/15 0.548, 15/20 0.531, 14/20 0.481")
 
 
-def rated_lines(kind: str, signals: list, start: float = 1000.0, model: str = "m-a", tone: str = "plain") -> list[dict]:
+def rated_lines(kind: str, signals: list, start: float = 1000.0, model: str = "m-a", tone: str = "plain", **extra) -> list[dict]:
     out = []
     for i, signal in enumerate(signals):
         at = start + 2 * i
-        out += [{"at": at, "points": 1, "kinds": [kind], "model": model, "tone": tone, "enabled": list(api.KINDS)},
+        out += [{"at": at, "points": 1, "kinds": [kind], "model": model, "tone": tone, "enabled": list(api.KINDS), **extra},
                 {"at": at + 1, "feedback": signal, "check_at": at}]
     return out
 
@@ -1603,6 +1636,97 @@ check(out["points"] == [] and system == api.SYSTEM_PROMPT and ledger_at(h14)[-1]
 mounted = {(getattr(r, "path", ""), m) for r in api.router.routes for m in getattr(r, "methods", ())}
 check({("/report", "POST"), ("/settings", "POST"), ("/keep", "POST")} <= mounted,
       f"25k. the router mounts POST /report, /settings and /keep ({sorted(mounted)})")
+
+# 26. Numbers the turn does not state: another headline, else one rewrite, else the first point stays
+NUM_ROWS = [{"id": 700, "role": "user", "content": "Fix the typo on line 3 of the README."},
+            {"id": 701, "role": "assistant", "content": "", "tool_calls": [tool_call("write_file", "{}")]},
+            {"id": 702, "role": "tool", "tool_name": "write_file", "content": "wrote 47 files, 4.8G free"},
+            {"id": 703, "role": "assistant", "content": "Done! I didn't change anything."}]
+Store.sessions["st-num"] = NUM_ROWS
+NUM_RECEIPT = receipt_of(NUM_ROWS)
+keys = api._number_keys("wrote 47 files, 4.8G free, line 3")
+found = [api._unstated(t, keys) for t in ("about 50 scratch files", "line 3, three files and 4.8G", "forty-seven files",
+                                          "Fifty files later", "twenty-one of them")]
+check(found == [["50"], [], [], ["Fifty"], ["twenty-one"]],
+      f"26a. the detector names 50, Fifty and twenty-one; line 3, three, 4.8G and forty-seven (47 in the turn) pass ({found})")
+
+
+def num_point(headline: str, text: str, kind: str = "unanswered", **extra) -> str:
+    return json.dumps({"points": [{"kind": kind, "by": "assistant", "language": "English", **extra, "headline": headline, "text": text}]})
+
+
+CLEAN_TEXT = "You asked for the typo fix; README.md was never edited and the reply says it is done."
+h15 = fresh_home("numbers")
+save_raw(h15, {"tone": "playful", "enabled": list(api.KINDS), "snoozed": {}})
+Fake.answers = [num_point("Fifty files later, teh survives", CLEAN_TEXT,
+                          headline_options=["Fifty files later, teh survives", "  The cleanup was thorough;\nthe typo stayed  ",
+                                            "Typo fix achieved by not fixing it"])]
+calls = len(Fake.calls)
+out = api.check("st-num", NUM_RECEIPT, 9101.0)
+line = ledger_at(h15)[-1]
+check(len(Fake.calls) == calls + 1 and out["points"] == [{"kind": "unanswered", "by": "assistant", "headline": "The cleanup was thorough; the typo stayed",
+                                                          "text": CLEAN_TEXT}]
+      and line.get("numbers") == "option" and line.get("prompt") == 2 and out["tone"] == "playful" and stored(h15)[-1]["tone"] == "playful",
+      f"26b. a headline with 50 and a clean option: the option (whitespace collapsed) is the headline, one call, numbers option ({out['points']}, {line.get('numbers')})")
+LONG_OPTION = "The cleanup was thorough " + "o" * 100
+Fake.answers = [num_point("Fifty files later, teh survives", CLEAN_TEXT, headline_options=["Fifty files later", LONG_OPTION])]
+out = api.check("st-num", NUM_RECEIPT, 9101.5)
+check(out["points"][0]["headline"] == LONG_OPTION[:79] + "…", f"26b. a long option is cut to 80 with an ellipsis ({len(out['points'][0]['headline'])})")
+Fake.answers = [num_point("Fifty files later, teh survives", "The assistant wrote about 50 files and never edited README.md.",
+                          headline_options=["The cleanup was thorough; the typo stayed"]),
+                num_point("The cleanup was thorough; the typo stayed", CLEAN_TEXT)]
+calls = len(Fake.calls)
+out = api.check("st-num", NUM_RECEIPT, 9101.7)
+check(len(Fake.calls) == calls + 2 and out["points"][0]["text"] == CLEAN_TEXT and ledger_at(h15)[-1].get("numbers") == "rewritten",
+      f"26b. a sentence with 50 is never kept by swapping the headline: the point is rewritten ({len(Fake.calls) - calls} calls)")
+save_raw(h15, {"tone": "plain", "enabled": [k for k in api.KINDS if k != "cost"], "snoozed": {}})
+FIRST = num_point("README typo was never fixed", "The assistant created about 50 scratch files and never edited README.md.")
+SECOND = num_point("README typo was never fixed", "The assistant created dozens of scratch files and never edited README.md.")
+Fake.answers = [FIRST, SECOND]
+calls = len(Fake.calls)
+out = api.check("st-num", NUM_RECEIPT, 9102.0)
+line = ledger_at(h15)[-1]
+first_msgs, second_msgs = (Fake.calls[calls]["messages"], Fake.calls[calls + 1]["messages"]) if len(Fake.calls) == calls + 2 else ([], [])
+check(len(Fake.calls) == calls + 2 and second_msgs[:-2] == first_msgs
+      and second_msgs[-2:] == [{"role": "assistant", "content": FIRST}, {"role": "user", "content": api.NUMBERS_RULE.format(numbers="50")}]
+      and Fake.calls[calls + 1].get("task") == "asterisk" and not any(k in Fake.calls[calls + 1] for k in ("provider", "model")),
+      f"26c. no clean option: one more call with the first messages, the first answer and the rule naming 50 ({second_msgs[-1:]})")
+check(out["points"][0]["text"] == json.loads(SECOND)["points"][0]["text"] and out["cost_usd"] == 0.04 and out["cost_status"] == "estimated"
+      and line.get("numbers") == "rewritten" and line.get("input_tokens") == 5000 and line.get("output_tokens") == 600 and line.get("cost_usd") == 0.04
+      and stored(h15)[-1]["points"] == out["points"],
+      f"26c. the rewrite replaces the point; tokens and cost are summed (0.04), numbers rewritten ({out['cost_usd']}, {line})")
+for label, second in (("still has the number", FIRST), ("changes the kind", num_point("x", "Nothing here.", kind="tradeoff")),
+                      ("is unreadable", "not json"), ("raises", RuntimeError("timed out")), ("has no point", '{"points": []}')):
+    Fake.answers = [FIRST, second]
+    calls = len(Fake.calls)
+    code, out = None, None
+    try:
+        out = api.check("st-num", NUM_RECEIPT, 9103.0)
+    except HTTPException as exc:
+        code = exc.status_code
+    line = ledger_at(h15)[-1]
+    cost = 0.02 if label == "raises" else 0.04
+    check(code is None and len(Fake.calls) == calls + 2 and out["points"][0]["text"] == json.loads(FIRST)["points"][0]["text"]
+          and line.get("numbers") == "failed" and line.get("cost_usd") == cost and out["cost_usd"] == cost,
+          f"26d. a rewrite that {label}: 200, the first point stays, numbers failed, cost {cost} ({code}, {line.get('numbers')}, {line.get('cost_usd')})")
+for label, answer in (("a point without one", num_point("Typo on line 3 was never fixed", CLEAN_TEXT)),
+                      ("a point of a kind switched off", num_point("Fifty files cost money", "About 50 files.", kind="cost"))):
+    Fake.answers = [answer]
+    calls = len(Fake.calls)
+    out = api.check("st-num", NUM_RECEIPT, 9104.0)
+    line = ledger_at(h15)[-1]
+    check(len(Fake.calls) == calls + 1 and "numbers" not in line and line.get("prompt") == 2,
+          f"26e. {label}: one call, no numbers key ({len(Fake.calls) - calls}, {sorted(line)})")
+raw_ledger = (h15 / "state" / "asterisk" / "ledger.jsonl").read_text(encoding="utf-8")
+check(not any(m in raw_ledger for m in ("Fifty", "scratch", "dozens", "teh")),
+      "26f. no ledger line holds a headline, a sentence or the numbers' text")
+got = suggested(rated_lines("tradeoff", [N] * 10, tone="playful"), {"tone": "playful", "enabled": list(api.KINDS)})
+check(got == [], f"26g. Playful notes rated under the old prompt do not count for Playful ({got})")
+got = suggested(rated_lines("tradeoff", [N] * 10, tone="playful", prompt=2), {"tone": "playful", "enabled": list(api.KINDS)})
+check(got == [{"kind": "tradeoff", "negative": 10, "rated": 10}], f"26g. Playful notes rated under prompt 2 count ({got})")
+got = suggested(rated_lines("tradeoff", [N] * 10))
+check(got == [{"kind": "tradeoff", "negative": 10, "rated": 10}], f"26g. Plain notes rated under the old prompt still count ({got})")
+Fake.answers = []
 Fake.answer = '{"points": []}'
 os.environ["HERMES_HOME"] = str(home)
 

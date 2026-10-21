@@ -2,7 +2,7 @@
 
 Routes (mounted at /api/plugins/asterisk/):
   POST /check     {session_id, turn}  -> {points: [] | [{kind, by, headline, text}], cost_usd, cost_status,
-                                          chars, at, title, model}
+                                          chars, at, title, model, tone}
   POST /dismiss   {check_at, signal}  -> {ok: true}   (the user dismissed that check's note: asked, read,
                                                        already_knew, unsure or not_useful)
   POST /notes     {}                  -> {notes: [...]}   (the pending notes, once per app start)
@@ -26,7 +26,8 @@ a title that cannot be read is null, never an error and never a lost point.
 
 What it writes: one line per check to <HERMES_HOME>/state/asterisk/ledger.jsonl — time, reply
 length, tokens, cost, whether there was a point, its kind and who decided, the turn's size, the
-`tone` and the `enabled` kinds it ran with (and `filtered`, a point of a kind switched off); one line
+`tone` and the `enabled` kinds it ran with, the `prompt` revision (and `filtered`, a point of a kind
+switched off, and `numbers`, how a number the turn does not state was taken out); one line
 per skip with only its time and reason; one line per dismissal with only its time, its signal and
 the check's `at`; and one `gone` line (`evicted` or `chat_gone`) with only its time and the check's
 `at` for each stored note dropped without a dismissal. Never any text: not the turn, not the
@@ -100,6 +101,9 @@ SUGGEST_MIN = 10
 SUGGEST_BOUND = 0.5
 SNOOZE_MORE = 10
 WILSON_Z = 1.96
+PROMPT_REV = 2
+TONE_SINCE = {"playful": 2}
+SMALL_COUNT = 10
 
 _KIND_BULLETS = """- tradeoff: the assistant chose one way over another without saying what was given up
 - result: a result the reply presents as done or correct that the turn's tool results put in doubt, or
@@ -114,16 +118,30 @@ _KIND_BULLETS = """- tradeoff: the assistant chose one way over another without 
 - constraint: something the user explicitly said not to do, in this turn or in an earlier message, that
   the assistant did, and the reply does not say so
 - overreach: something the assistant did that the user did not ask for, which the reply does not mention"""
+_UNIT_WORDS = {w: n for n, w in enumerate(("one", "two", "three", "four", "five", "six", "seven", "eight", "nine"), 1)}
+_TENS_WORDS = {**{w: n for n, w in enumerate(("eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen",
+                                              "eighteen", "nineteen"), 11)},
+               **{w: n * 10 for n, w in enumerate(("twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"), 2)}}
+_DIGITS = re.compile(r"\d+(?:[.,]\d+)*")
+_SPELLED = re.compile(rf"\b({'|'.join(_TENS_WORDS)})(?:[- ]({'|'.join(_UNIT_WORDS)}))?\b", re.I)
 _KIND_LINES = {m.group(1): m.group(0) for m in re.finditer(r"^- (\w+): .*(?:\n  .*)*", _KIND_BULLETS, re.M)}
 _TONE_LINES = {
     "plain": "",
-    "friendly": ("- Tone: friendly. Write the headline and the sentence the way a helpful colleague would say it: warm,\n"
-                 "  everyday words, no jargon, no exclamation marks. The tone changes only the wording, never whether there\n"
-                 "  is a point, which point or its kind. An irreversible or security point is always written plainly.\n"),
-    "playful": ("- Tone: playful. Write the headline and the sentence with a light, witty touch: a gentle turn of\n"
-                "  phrase, never sarcasm and never a joke at the user's expense; the facts stay exact. The tone changes only\n"
-                "  the wording, never whether there is a point, which point or its kind. An irreversible or security point\n"
-                "  is always written plainly, with no wit.\n"),
+    "friendly": ("- Tone: friendly. Write the headline the way a helpful colleague would say it: warm, everyday words, no\n"
+                 "  jargon, no exclamation marks. The sentence stays plain and exact. The tone changes only the headline's\n"
+                 "  wording, never whether there is a point, which point or its kind. An irreversible or security point is\n"
+                 "  always written plainly.\n"),
+    "playful": ("- Tone: playful. The headline is a joke built on one concrete detail the turn shows (a file name, a\n"
+                "  command, a value, a phrase from the reply): irony or comic understatement, aimed at the situation or\n"
+                "  the assistant, never at the user. What it says stays true. Examples from other turns, for the\n"
+                "  register only: \"All tests pass, mostly by not running\", \"SQLite moved in while nobody was looking\",\n"
+                "  \"It's 9 a.m. somewhere: the assistant picked UTC\". Right before \"headline\", add \"headline_options\":\n"
+                "  four candidate headlines, each from a different angle; then \"headline\" is the most surprising of them\n"
+                "  that is true and keeps every rule above: never simply the first one written, and never the one that\n"
+                "  only repeats the reply's own words. The sentence stays plain and exact, with no joke. The tone changes\n"
+                "  only the headline's wording, never whether there is a point, which point or its kind. An irreversible\n"
+                "  or security point is always written plainly, headline included, with no wit, and has no\n"
+                "  \"headline_options\".\n"),
 }
 
 
@@ -149,6 +167,9 @@ the one that matters most to the user.
 Rules:
 - Never restate what the reply already says clearly. If the reply says it, it is not a point.
 - Only what the turn shows. Never invent, never add your own advice.
+- Every number in the headline and the sentence is one the turn states, or a count of at most ten
+  things the turn names; any other count is a word such as "dozens". Never state an outcome the turn
+  does not show, such as that something now breaks or will fail.
 - The earlier messages are context only: use them to see what the user asked for or ruled out before
   this turn. Never make a point about an earlier turn itself.
 - Most turns have nothing to flag. Then return no point; that is the normal answer.
@@ -173,6 +194,9 @@ SYSTEM_PROMPT = system_prompt("plain", KINDS)
 # without this a point about a Turkish reply came back in English (4 of 5 points, eval 2026-10-17).
 LANGUAGE_RULE = ("Write the headline and the point in the language of the final reply (the [assistant: final reply] "
                  "block above), not in the language of these instructions or of the tool results.")
+NUMBERS_RULE = ("These numbers in your headline or sentence are not in the turn: {numbers}. Write the same point again, "
+                "with the same kind, without them: a count becomes a word such as \"dozens\", any other number is left "
+                "out. Keep its language and every rule above, and answer with JSON only.")
 
 _ledger_lock = threading.Lock()
 
@@ -502,6 +526,69 @@ def _parse(raw: str, kinds=KINDS) -> list[dict]:
     return out
 
 
+def _headline_options(raw: str) -> list[str]:
+    try:
+        text = raw.strip()
+        fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, re.S)
+        options = json.loads(fenced.group(1) if fenced else text)["points"][0]["headline_options"]
+    except (ValueError, TypeError, KeyError, IndexError):
+        return []
+    if not isinstance(options, list):
+        return []
+    return [" ".join(o.split()) for o in options if isinstance(o, str) and o.strip()]
+
+
+def _number_keys(material: str) -> set[str]:
+    return {n.replace(",", ".") for n in _DIGITS.findall(material)}
+
+
+def _unstated(text: str, keys: set[str]) -> list[str]:
+    out = [n for n in _DIGITS.findall(text) if not (n.isdigit() and int(n) <= SMALL_COUNT) and n.replace(",", ".") not in keys]
+    for m in _SPELLED.finditer(text):
+        value = _TENS_WORDS[m.group(1).lower()] + (_UNIT_WORDS[m.group(2).lower()] if m.group(2) else 0)
+        if str(value) not in keys:
+            out.append(m.group(0))
+    return out
+
+
+def _point_unstated(point: dict, keys: set[str]) -> list[str]:
+    return _unstated(point["headline"], keys) + _unstated(point["text"], keys)
+
+
+def _other_headline(point: dict, options: list[str], keys: set[str]) -> dict | None:
+    if _unstated(point["text"], keys):
+        return None
+    for option in options:
+        if option != point["headline"] and not _unstated(option, keys):
+            return {**point, "headline": option if len(option) <= MAX_HEADLINE_CHARS else option[:MAX_HEADLINE_CHARS - 1] + "…"}
+    return None
+
+
+def _add_cost(a: tuple, b: tuple) -> tuple[int, int, float | None, str]:
+    usd = a[2] + b[2] if a[2] is not None and b[2] is not None else None
+    return a[0] + b[0], a[1] + b[1], usd, a[3] if a[3] == b[3] else "unknown"
+
+
+def _without_numbers(messages: list[dict], raw: str, point: dict, keys: set[str]) -> tuple[dict, str, tuple | None]:
+    ask = NUMBERS_RULE.format(numbers=", ".join(dict.fromkeys(_point_unstated(point, keys))))
+    route: dict = {}
+    try:
+        response = _call_llm(messages + [{"role": "assistant", "content": raw}, {"role": "user", "content": ask}], route)
+    except Exception as exc:  # noqa: BLE001 — the first point stands; the failure is only logged
+        log.warning("asterisk: number rewrite failed (%s)", type(exc).__name__)
+        return point, "failed", None
+    cost = _cost(response, route)
+    try:
+        again_raw = _content(response)
+        again = _parse(again_raw)
+    except (ValueError, TypeError):
+        return point, "failed", cost
+    if len(again) != 1 or again[0]["kind"] != point["kind"]:
+        return point, "failed", cost
+    fixed = again[0] if not _point_unstated(again[0], keys) else _other_headline(again[0], _headline_options(again_raw), keys)
+    return (fixed, "rewritten", cost) if fixed else (point, "failed", cost)
+
+
 def _record(entry: dict) -> None:
     path = _ledger_path()
     try:
@@ -749,7 +836,7 @@ def _ledger_notes(lines: list[dict], pending: set) -> list[dict]:
             continue
         outcome, rated_at = (ends.get(at) or ("open" if at in pending else "unrecorded", None)) if _positive(at) else ("unrecorded", None)
         out.append({"kind": _kind_of(kinds[0]), "model": _model_of(line), "tone": _tone_of(line), "outcome": outcome,
-                    "rated_at": rated_at})
+                    "rated_at": rated_at, "prompt": line["prompt"] if _is_id(line.get("prompt")) else 1})
     return out
 
 
@@ -782,7 +869,8 @@ def _suggestions(seen: list[dict], checks: list[dict], settings: dict) -> list[d
         if snooze is not None and rated_all.get(kind, 0) < snooze + SNOOZE_MORE:
             continue
         window = sorted((note for note in seen if note["kind"] == kind and note["outcome"] in RATED and note["model"] == model
-                         and note["tone"] == settings["tone"]), key=lambda note: note["rated_at"])[-SUGGEST_WINDOW:]
+                         and note["tone"] == settings["tone"] and note["prompt"] >= TONE_SINCE.get(settings["tone"], 1)),
+                        key=lambda note: note["rated_at"])[-SUGGEST_WINDOW:]
         if len(window) < SUGGEST_MIN:
             continue
         negative = sum(note["outcome"] in NEGATIVE for note in window)
@@ -942,8 +1030,9 @@ def check(session_id, turn, now: float | None = None) -> dict:
     started = time.monotonic()
     route: dict = {}
     settings = _settings()
+    messages = build_messages(turn_text, earlier_text, settings)
     try:
-        response = _call_llm(build_messages(turn_text, earlier_text, settings), route)
+        response = _call_llm(messages, route)
     except Exception as exc:  # noqa: BLE001 — named to the user, the full error only logged
         log.warning("asterisk: model call failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"model call failed ({type(exc).__name__})") from exc
@@ -952,24 +1041,39 @@ def check(session_id, turn, now: float | None = None) -> dict:
     entry = {"at": at, "chars": chars, "provider": route.get("provider"), "model": model, "input_tokens": tokens_in,
              "output_tokens": tokens_out, "cost_usd": usd, "cost_status": status,
              "seconds": round(time.monotonic() - started, 2), **stats, "turn_complete": turn.get("complete") is True,
-             "earlier_chars": len(earlier_text), "tone": settings["tone"], "enabled": settings["enabled"]}
+             "earlier_chars": len(earlier_text), "tone": settings["tone"], "enabled": settings["enabled"], "prompt": PROMPT_REV}
     try:
-        points = _parse(_content(response))
+        raw = _content(response)
+        points = _parse(raw)
     except (ValueError, TypeError) as exc:
         _record({**entry, "points": None, "error": "unreadable"})
         log.warning("asterisk: model answer unreadable (%s)", type(exc).__name__)
         raise HTTPException(status_code=502, detail="model answer unreadable") from exc
     filtered = [p["kind"] for p in points if p["kind"] not in settings["enabled"]]
     points = [p for p in points if p["kind"] in settings["enabled"]]
+    keys = _number_keys(turn_text + "\n" + earlier_text)
+    numbers = None
+    if points and _point_unstated(points[0], keys):
+        swapped = _other_headline(points[0], _headline_options(raw), keys)
+        if swapped:
+            points, numbers = [swapped], "option"
+        else:
+            fixed, numbers, extra = _without_numbers(messages, raw, points[0], keys)
+            points = [fixed]
+            if extra:
+                tokens_in, tokens_out, usd, status = _add_cost((tokens_in, tokens_out, usd, status), extra)
+                entry.update(input_tokens=tokens_in, output_tokens=tokens_out, cost_usd=usd, cost_status=status,
+                             seconds=round(time.monotonic() - started, 2))
     _record({**entry, "points": len(points), "kinds": [p["kind"] for p in points],
-             "by": points[0]["by"] if points else None, **({"filtered": filtered} if filtered else {})})
+             "by": points[0]["by"] if points else None, **({"filtered": filtered} if filtered else {}),
+             **({"numbers": numbers} if numbers else {})})
     title = read_title(session_id) if points else None
     if points:
         note = {"session_id": session_id, "at": at, "title": title, "model": model, "cost_usd": usd, "cost_status": status,
-                "points": points}
+                "points": points, "tone": settings["tone"]}
         _keep_note(note)
     return {"points": points, "cost_usd": usd, "cost_status": status, "chars": chars, "at": at, "title": title,
-            "model": model}
+            "model": model, "tone": settings["tone"]}
 
 
 def dismiss(check_at, signal, now: float | None = None) -> dict:

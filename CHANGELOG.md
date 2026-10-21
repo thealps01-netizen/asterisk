@@ -1,5 +1,22 @@
 # Changelog
 
+## 4.5.0 (2026-10-20)
+
+- Tone changes only the headline. Playful's headline is now a real joke about the situation or the
+  assistant (never the user), picked from four candidates the model writes; Friendly's is warm. The
+  sentence stays plain and exact in every tone, and "Ask in chat" sends a Playful note's kind label
+  ("Asterisk: Left unanswered — <sentence>") instead of the joke. Irreversible and security notes stay
+  plain, headline included.
+- No made-up numbers, every tone: the prompt says a number must be one the turn states (or a small
+  count), and the backend checks each number in the headline and sentence against the turn the model
+  read. A Playful headline is swapped for a clean candidate; otherwise the model is asked once to
+  rewrite the point without it (one extra call, only then). Measured before the fix: the 4.4.0 Plain
+  prompt wrote "about 50" for 47 files in 2 of 5 trials.
+- Ledger: check lines add `prompt` (2) and, when a number was taken out, `numbers` (`option`,
+  `rewritten` or `failed`); no text. A check's answer and a stored note add `tone`.
+- Playful notes rated before 4.5.0 no longer count toward Playful's "Turn off" suggestions.
+- The prompt changes for every tone (the number rule), so it is no longer byte-identical to 4.3.0.
+
 ## 4.4.0 (2026-10-20)
 
 - A settings page, Settings → Plugins → Asterisk, saved per profile in
