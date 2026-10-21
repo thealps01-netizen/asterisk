@@ -88,7 +88,7 @@ const en = {
       group: n => `Priority ${n}`,
       locked: 'Always on: a missed irreversible step or security risk costs the most.',
       order: 'When a turn has more than one, the note names the first group that applies. The order is fixed.',
-      toneNote: 'Tone changes only the wording, never which note you get. Irreversible and security notes are always written plainly.',
+      toneNote: 'Tone changes only the headline: the sentence stays plain and you get the same notes. Irreversible and security notes are always written plainly.',
       loading: 'Loading…',
       loadFailed: detail => `Could not load the report: ${detail}`,
       retry: 'Try again',
@@ -146,8 +146,8 @@ const en = {
       },
       tones: {
         plain: { label: 'Plain', description: 'Straight and neutral. The default.' },
-        friendly: { label: 'Friendly', description: 'Warm, everyday words, like a helpful colleague.' },
-        playful: { label: 'Playful', description: 'A light, witty touch; the facts stay exact.' }
+        friendly: { label: 'Friendly', description: 'A warm headline, like a helpful colleague.' },
+        playful: { label: 'Playful', description: 'A joke in the headline; the sentence and Ask in chat stay serious.' }
       }
     }
   }
@@ -198,6 +198,8 @@ export function noteFor(result, { key, storedId }) {
     headline: point.headline,
     text: point.text,
     by: point.by,
+    kind: point.kind,
+    tone: result.tone,
     cost: fmtCost(result.cost_usd, result.cost_status),
     model: filled(result.model) ? result.model : '',
     checkAt: result.at
@@ -325,7 +327,8 @@ export function createWatcher(ctx, hostApi = host) {
     asking.add(note.id)
     let done = false
     try {
-      done = await hostApi.composer.insertText(note.storedId, t('asterisk.askText', note.headline, note.text), { mode: 'block' })
+      const lead = note.tone === 'playful' && Object.hasOwn(en.asterisk.settings.kinds, note.kind) ? t(`asterisk.settings.kinds.${note.kind}.label`) : note.headline
+      done = await hostApi.composer.insertText(note.storedId, t('asterisk.askText', lead, note.text), { mode: 'block' })
     } catch (err) {
       console.warn(`[${ID}] insert failed`, err)
     } finally {

@@ -48,8 +48,11 @@ Settings → Plugins → Asterisk. Changes are saved for the active profile and 
 
 - **What it looks for:** the ten kinds in their fixed priority order, each with a switch. Irreversible
   step and Security risk are always on. A kind switched off is no longer asked of the model.
-- **How it talks:** Plain (the default), Friendly or Playful. The tone changes only the wording,
-  never which note you get; irreversible and security notes are always written plainly.
+- **How it talks:** Plain (the default), Friendly or Playful. The tone changes only the headline:
+  Friendly makes it warm, Playful makes it a joke about the situation or the assistant, never about
+  you. The sentence stays plain in every tone, "Ask in chat" sends a Playful note's kind instead of
+  its joke, and irreversible and security notes are always written plainly. The tone never changes
+  which note you get.
 - **How useful it is:** checks, notes, spend and cost per asked note, then tables by kind, by model
   and by tone of how each note left: Shown, Filtered (written for a kind you switched off, not shown),
   Asked, Read, Already knew, Not sure, Not useful, Open, Dropped (more than 50 notes were waiting),
