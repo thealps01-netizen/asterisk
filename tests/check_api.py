@@ -112,7 +112,7 @@ Locks:
      oldest first, each redacted, unframed and cut to 500 with head and tail, the block at most
      2,000 (oldest dropped whole), framed once in <earlier> before the turn; the compressor absent
      -> no block and the check still runs; no earlier rows -> the 4.0.0 user message exactly.
- 22. Notes on disk (development phase), each part in a fresh profile home:
+ 22. Notes on disk, each part in a fresh profile home:
      (a) restart survival: a check with a point writes plugin-data/asterisk/notes.json holding exactly
          one entry {session_id, at, title, model, cost_usd, cost_status, points, tone} with the full headline
          and text; plugin_api.py loaded a second time under another module name (same HERMES_HOME)
@@ -1138,7 +1138,7 @@ else:
     del sys.modules[events_name]
 
 
-# 22. Notes survive a restart (development phase): plugin-data/asterisk/notes.json
+# 22. Notes survive a restart: plugin-data/asterisk/notes.json
 def notes_path(root: Path) -> Path:
     return root / "plugin-data" / "asterisk" / "notes.json"
 

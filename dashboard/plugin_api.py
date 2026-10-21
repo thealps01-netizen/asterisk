@@ -32,7 +32,7 @@ per skip with only its time and reason; one line per dismissal with only its tim
 the check's `at`; and one `gone` line (`evicted` or `chat_gone`) with only its time and the check's
 `at` for each stored note dropped without a dismissal. Never any text: not the turn, not the
 reply, not the point, not its headline, not the chat's title. That ledger is what the cost review
-reads (see Docs/asterisk-notes.md). For the development phase, each pending note (the /check answer
+reads (see Docs/asterisk-notes.md). Each pending note (the /check answer
 with its chat, text included) is also kept in <HERMES_HOME>/plugin-data/asterisk/notes.json until it
 is dismissed, apart from the ledger. The settings (tone, enabled kinds, snoozed suggestions) are in
 <HERMES_HOME>/plugin-data/asterisk/settings.json.
