@@ -401,7 +401,9 @@ backend at `/api/plugins/<manifest.json name>` (only when that name is in `plugi
 the desktop half's `ctx.rest` calls `/api/plugins/<plugin.js id>`; all three are `asterisk`. The
 desktop half is a copy of `plugins/asterisk/desktop/` the app keeps in `desktop-plugins/asterisk`.
 Install and update run in the app (Capabilities → Plugins → Install from Git; the row's Update
-button), see the README.
+button), see the README. An update takes effect only after the app restarts: after the 4.5.0 install
+reported "nothing of this plugin needs a session or restart", the running app kept writing 4.4.0
+check lines (no `prompt` field) until it was quit and opened again, so the README says to restart.
 
 Upgrading from 2.x (You Should Know): uninstall the `you-should-know` row, then install Asterisk.
 The uninstall removes 2.x's folder, its pin and its desktop half; the old Update button would pull

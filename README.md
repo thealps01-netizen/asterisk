@@ -95,6 +95,9 @@ the Desktop half in Capabilities → Plugins, then choose the model as in step 5
 Capabilities → Plugins → the Asterisk row's **Update** button (shown when a newer commit is on
 GitHub). An install pinned to a commit updates only by installing again with a new pin.
 
+After any update, quit Hermes and open it again. Until then the running app keeps the previous
+version's backend and settings page, even when the installer says no restart is needed.
+
 From 3.0.0: choose a model once as in Install step 5; 3.0.0 always used `claude-opus-5-5` on
 `anthropic`.
 
