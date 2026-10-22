@@ -119,6 +119,8 @@ jobs:
           - { name: v0.22.0, sha: e06df9c2eae6901f4c88f464e0ae6e753c0428b8 }
           - { name: v0.22.1, sha: 297552a9d646119871391d202509822cd86330df }
           - { name: v0.22.2, sha: d923a5eb487a17c0a68801bba9ef0f56c81040a8 }
+          - { name: v0.22.3, sha: 5b147ab036d6d19131bff8d20701b5001eab844a }
+          - { name: v0.22.4, sha: 4d04303818b61bf3aa09278af48356315515965b }
           - { name: pin, sha: d4d2ab7b5d104166e7e22a02cafd12f1fe456a31 }
     defaults:
       run:
