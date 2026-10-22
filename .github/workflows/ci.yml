@@ -67,6 +67,7 @@ jobs:
             /hermes_cli/plugins_cmd_install.py /hermes_cli/web_server_dashboard.py /hermes_cli/plugins_cmd_remove.py \
             /apps/desktop/src/api/plugins.ts /apps/desktop/electron/desktop-plugins-root.ts /apps/desktop/src/sdk/runtime.ts \
             /apps/desktop/src/app/capabilities/plugins/plugins-tab.tsx /apps/desktop/src/i18n/en.ts \
+            /apps/desktop/src/i18n/en_model_settings.ts \
             /hermes_cli/plugins.py /hermes_cli/web_routers/models.py /apps/desktop/src/app/settings/aux-task-rows.tsx \
             /agent/tool_result_classification.py \
             /agent/context_compressor.py \
