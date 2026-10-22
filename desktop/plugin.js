@@ -47,6 +47,8 @@ const ID = 'asterisk'
 const SEEN_MAX = 500
 const CHECKED_MAX = 300
 const STAGGER_MS = 80
+const UNDO_MS = 5000
+const HIGH = new Set(['irreversible', 'security'])
 const SERIF = '"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif'
 
 const en = {
@@ -56,6 +58,7 @@ const en = {
     count: n => (n === 1 ? '1 note' : `${n} notes`),
     meta: (cost, by, title, model) => [title, model, cost, by].filter(Boolean).join(' · '),
     from: (title, cost, model) => [title, [model, cost].filter(Boolean).join(' ')].filter(Boolean).join(' · '),
+    kindLead: label => `${label} · `,
     untitled: 'Untitled chat',
     by: {
       assistant: 'decided by assistant',
@@ -69,6 +72,10 @@ const en = {
     notSure: 'Not sure',
     notUseful: 'Not useful',
     gotIt: 'Got it',
+    rate: 'Rate',
+    recorded: label => `Recorded: ${label}.`,
+    undo: 'Undo',
+    announce: headline => `Worth knowing: ${headline}`,
     collapse: 'Collapse',
     expand: 'Expand',
     dotLabel: 'Worth knowing: a note waiting',
@@ -90,6 +97,7 @@ const en = {
       order: 'When a turn has more than one, the note names the first group that applies. The order is fixed.',
       toneNote: 'Tone changes only the headline: the sentence stays plain and you get the same notes. Irreversible and security notes are always written plainly.',
       loading: 'Loading…',
+      saving: 'Saving…',
       loadFailed: detail => `Could not load the report: ${detail}`,
       retry: 'Try again',
       saveFailed: detail => `Could not save the settings: ${detail}`,
@@ -101,7 +109,7 @@ const en = {
       perAsked: usd => `${usd} per asked note`,
       skipped: n => `${n} skipped`,
       since: date => `since ${date}`,
-      suggest: (label, negative, rated) => `Turn off ${label}? ${negative} of the last ${rated} rated notes were Not useful or Already knew. Turning it off stops Asterisk looking for it; you can turn it back on above.`,
+      suggest: (label, negative, rated) => `Turn off ${label}? ${negative} of the last ${rated} rated notes were Not useful or Already knew. Turning it off stops Asterisk looking for it; you can turn it back on with its switch.`,
       turnOff: 'Turn off',
       keep: 'Keep',
       byKind: 'By kind',
@@ -117,7 +125,7 @@ const en = {
         shown: 'Shown',
         filtered: 'Filtered',
         asked: 'Asked',
-        read: 'Read',
+        read: 'Got it',
         already_knew: 'Already knew',
         unsure: 'Not sure',
         not_useful: 'Not useful',
@@ -241,11 +249,14 @@ async function standDown(ctx) {
   }
 }
 
-export function createWatcher(ctx, hostApi = host) {
+export function createWatcher(ctx, hostApi = host, { undoMs = UNDO_MS } = {}) {
   const seen = new Map() // runtime session id -> stored session id, for chats the user opened here
   const checked = new Map() // reply key -> true, checked or being checked
   const notes = atom([]) // the pending notes, in arrival order; restored from the backend once per start
   const folded = atom(false)
+  const undo = atom(null)
+  const latest = atom('')
+  let undoTimer = null
   const asking = new Set()
   const gone = new Set()
   const capture = () => {
@@ -298,6 +309,7 @@ export function createWatcher(ctx, hostApi = host) {
     }
     if (!note) return
     notes.set([...notes.get(), note])
+    latest.set(note.headline)
     folded.set(false)
     if (ctx.pet?.visible?.get?.()) ctx.pet.say(t('asterisk.pet'), { id: ID, tone: 'info' })
   }
@@ -305,10 +317,7 @@ export function createWatcher(ctx, hostApi = host) {
   /** The note leaves the strip, nothing else. */
   const dismiss = id => notes.set(notes.get().filter(n => n.id !== id))
 
-  /** A button removes the note and the backend records it against its check, with the signal (no text). */
-  async function leave(note, signal, label) {
-    gone.add(note.checkAt)
-    dismiss(note.id)
+  async function record(note, signal, label) {
     try {
       await ctx.rest('/dismiss', { method: 'POST', body: { check_at: note.checkAt, signal } })
     } catch (err) {
@@ -316,6 +325,37 @@ export function createWatcher(ctx, hostApi = host) {
       console.warn(`[${ID}] feedback failed`, err)
       hostApi.notify({ id: `${ID}-feedback-error`, kind: 'error', title: t('asterisk.title'), message: t('asterisk.feedbackFailed', label, detail) })
     }
+  }
+
+  function flush() {
+    const held = undo.get()
+    if (!held) return undefined
+    clearTimeout(undoTimer)
+    undoTimer = null
+    undo.set(null)
+    return record(held.note, held.signal, held.label)
+  }
+
+  function takeBack() {
+    const held = undo.get()
+    if (!held) return
+    clearTimeout(undoTimer)
+    undoTimer = null
+    undo.set(null)
+    gone.delete(held.note.checkAt)
+    const list = [...notes.get()]
+    list.splice(Math.min(held.index, list.length), 0, held.note)
+    notes.set(list)
+  }
+
+  /** A button removes the note; the backend records it against its check, with the signal (no text), once the undo window closes. */
+  function leave(note, signal, label) {
+    void flush()
+    gone.add(note.checkAt)
+    const index = notes.get().findIndex(n => n.id === note.id)
+    dismiss(note.id)
+    undo.set({ note, signal, label, index })
+    undoTimer = setTimeout(() => void flush(), undoMs)
   }
   const gotIt = note => leave(note, 'read', t('asterisk.gotIt'))
   const knew = note => leave(note, 'already_knew', t('asterisk.knew'))
@@ -338,7 +378,10 @@ export function createWatcher(ctx, hostApi = host) {
       hostApi.notify({ id: `${ID}-ask-failed`, kind: 'warning', title: t('asterisk.title'), message: t('asterisk.askFailed') })
       return
     }
-    await leave(note, 'asked', t('asterisk.askInChat'))
+    void flush()
+    gone.add(note.checkAt)
+    dismiss(note.id)
+    await record(note, 'asked', t('asterisk.askInChat'))
   }
 
   const toggleFold = () => folded.set(!folded.get())
@@ -386,44 +429,61 @@ export function createWatcher(ctx, hostApi = host) {
     notes.set([...back, ...notes.get().filter(n => !backAt.has(n.checkAt))])
   }
 
-  return { capture, noteFocus, onComplete, dismiss, gotIt, knew, notSure, notUseful, ask, toggleFold, status, restore, notes, folded, seen, checked }
+  return { capture, noteFocus, onComplete, dismiss, gotIt, knew, notSure, notUseful, ask, toggleFold, fold: () => folded.set(true), takeBack, flush, status, restore, notes, folded, undo, latest, seen, checked }
 }
 
 // Typography, hairlines, the stroke and one chevron: no box, no fill. Every colour is an app theme
 // token, so the strip follows the theme and light/dark. Animation runs under data-motion="full" only.
+const BTN_CSS = `font:inherit;font-size:12px;line-height:1.3;min-height:24px;padding:3px 10px;border-radius:6px;background:transparent;cursor:pointer;color:var(--ui-text-primary);border:1px solid var(--ui-stroke-secondary)`
+const SR_CSS = `position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0`
+
 const CSS = `
 .asterisk-strip{min-width:0;max-height:360px;overflow-y:auto;padding:12px 14px 4px;font-family:var(--font-sans);border-bottom:1px solid var(--ui-stroke-quaternary)}
 .asterisk-strip[data-folded="true"]{padding-bottom:12px}
+.asterisk-sr{${SR_CSS}}
 .asterisk-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
-.asterisk-label{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;line-height:1.4}
-.asterisk-label-name{color:var(--ui-accent);font-weight:600}
-.asterisk-h-label{position:relative;display:inline-block}
-.asterisk-label-count{color:var(--ui-text-tertiary)}
-.asterisk-fold{display:inline-flex;align-items:center;justify-content:center;flex:none;padding:2px;border:0;border-radius:4px;background:transparent;cursor:pointer;color:var(--ui-text-tertiary)}
-.asterisk-fold:hover{color:var(--ui-text-primary)}
+.asterisk-label{display:flex;align-items:baseline;gap:6px;min-width:0;overflow:hidden;font-size:12px;letter-spacing:.1em;text-transform:uppercase;line-height:1.4;white-space:nowrap}
+.asterisk-label-name{flex:none;color:var(--ui-accent);font-weight:600}
+.asterisk-label-count{flex:none;color:var(--ui-text-secondary)}
+.asterisk-label-kind{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--ui-text-secondary)}
+.asterisk-label-kind[data-severity="high"],.asterisk-kind-tag[data-severity="high"]{color:var(--ui-red);font-weight:600}
+.asterisk-peek{flex:1 1 auto;min-width:0;margin-left:6px;overflow:hidden;text-overflow:ellipsis;font-family:${SERIF};font-size:14px;letter-spacing:0;text-transform:none;color:var(--ui-text-primary)}
+.asterisk-fold{display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:24px;min-height:24px;padding:6px;border:0;border-radius:6px;background:transparent;cursor:pointer;color:var(--ui-text-secondary)}
+.asterisk-fold:hover{color:var(--ui-text-primary);background:var(--ui-control-hover-background)}
 .asterisk-fold:focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}
 .asterisk-fold[aria-expanded="false"] svg{transform:rotate(180deg)}
 [data-motion="full"] .asterisk-fold svg{transition:transform .2s ease}
 .asterisk-list{list-style:none;margin:0;padding:0}
 .asterisk-entry{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:10px;align-items:start;padding:10px 0 12px;border-bottom:1px solid var(--ui-stroke-quaternary)}
 .asterisk-entry:last-child{border-bottom:0}
-.asterisk-entry.asterisk-numbered{grid-template-columns:48px minmax(0,1fr) auto}
-.asterisk-num{font-family:${SERIF};font-size:30px;line-height:1;font-variant-numeric:lining-nums;color:color-mix(in srgb, var(--ui-accent) 85%, var(--ui-text-primary))}
+.asterisk-entry.asterisk-numbered{grid-template-columns:32px minmax(0,1fr) auto}
+.asterisk-num{font-family:${SERIF};font-size:22px;line-height:1;font-variant-numeric:lining-nums;color:color-mix(in srgb, var(--ui-accent) 85%, var(--ui-text-primary))}
+.asterisk-entry[data-expanded="false"] .asterisk-num{font-size:17px;color:var(--ui-text-secondary)}
 .asterisk-body{min-width:0}
-.asterisk-headline{margin:0}
-.asterisk-h{position:relative;display:inline-block;max-width:100%;font-family:${SERIF};font-size:20px;line-height:1.2;color:var(--ui-text-primary);overflow-wrap:anywhere}
+.asterisk-headline{margin:0;font-family:${SERIF};font-size:20px;font-weight:400;line-height:1.2;letter-spacing:0}
+.asterisk-h{position:relative;display:inline-block;max-width:100%;color:var(--ui-text-primary);overflow-wrap:break-word}
+.asterisk-entry[data-expanded="false"] .asterisk-headline{font-size:15px;line-height:1.3}
 .asterisk-stroke{position:absolute;left:0;bottom:-6px;width:100%;height:8px;overflow:visible}
 .asterisk-stroke path{fill:none;stroke:var(--ui-accent);stroke-width:2.2;stroke-linecap:round;stroke-dasharray:400;stroke-dashoffset:0}
-.asterisk-text{margin:12px 0 0;font-size:12px;line-height:1.55;color:var(--ui-text-secondary);overflow-wrap:anywhere}
-.asterisk-meta{margin:5px 0 0;font-size:10.5px;color:var(--ui-text-tertiary);overflow-wrap:anywhere}
-.asterisk-from{margin-top:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.asterisk-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.asterisk-entry[data-severity="high"] .asterisk-stroke path{stroke:var(--ui-red)}
+.asterisk-text{margin:12px 0 0;font-size:13px;line-height:1.55;color:var(--ui-text-secondary);overflow-wrap:break-word}
+.asterisk-meta{margin:5px 0 0;font-size:12px;color:var(--ui-text-secondary);overflow-wrap:anywhere}
+.asterisk-from{margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.asterisk-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px}
+.asterisk-rate{display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px;margin-left:auto}
+.asterisk-rate-label{margin-right:4px;font-size:12px;color:var(--ui-text-secondary)}
 .asterisk-go{align-self:center}
-.asterisk-btn{font:inherit;font-size:11.5px;line-height:1.3;padding:3px 10px;border-radius:6px;background:transparent;cursor:pointer;color:var(--ui-text-primary);border:1px solid var(--ui-stroke-secondary)}
+.asterisk-btn{${BTN_CSS}}
+.asterisk-btn:hover{background:var(--ui-control-hover-background)}
 .asterisk-btn:focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}
-.asterisk-gotit{color:var(--ui-accent);border-color:color-mix(in srgb, var(--ui-accent) 45%, transparent)}
-.asterisk-dot{display:inline-block;flex:none;width:6px;height:6px;border-radius:50%;background:var(--ui-accent)}
-[data-motion="full"] .asterisk-stroke path{stroke-dashoffset:400;animation:asterisk-draw 1.1s .3s cubic-bezier(.6,.1,.2,1) forwards}
+.asterisk-primary{color:var(--ui-bg-chrome);background:var(--ui-accent);border-color:var(--ui-accent);font-weight:500}
+.asterisk-primary:hover{background:color-mix(in srgb, var(--ui-accent) 86%, var(--ui-text-primary))}
+.asterisk-quiet{border-color:transparent;color:var(--ui-text-secondary);padding:3px 6px}
+.asterisk-quiet:hover{color:var(--ui-text-primary)}
+.asterisk-undo{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0 10px;font-size:12px;color:var(--ui-text-secondary)}
+.asterisk-dot{display:inline-block;flex:none;width:7px;height:7px;border-radius:50%;background:var(--ui-accent)}
+[data-motion="full"] .asterisk-entry[data-expanded="true"] .asterisk-stroke path{stroke-dashoffset:400;animation:asterisk-draw 1.1s .3s cubic-bezier(.6,.1,.2,1) forwards}
+[data-motion="full"] .asterisk-entry[data-severity="high"] .asterisk-stroke path{stroke-dashoffset:0;animation:none}
 [data-motion="full"] .asterisk-entry{animation:asterisk-up .5s both}
 [data-motion="reduce"] .asterisk-stroke path{stroke-dashoffset:0}
 @keyframes asterisk-draw{to{stroke-dashoffset:0}}
@@ -443,8 +503,23 @@ function Stroke() {
   })
 }
 
-function Button({ className, onClick, children }) {
-  return jsx('button', { type: 'button', className: className ? `asterisk-btn ${className}` : 'asterisk-btn', onClick, children })
+function Button({ className, onClick, describedBy, signal, children }) {
+  return jsx('button', {
+    type: 'button',
+    className: className ? `asterisk-btn ${className}` : 'asterisk-btn',
+    'aria-describedby': describedBy,
+    'data-signal': signal,
+    onClick,
+    children
+  })
+}
+
+const severity = kind => (HIGH.has(kind) ? 'high' : undefined)
+const kindName = (t, kind) => (typeof kind === 'string' && Object.hasOwn(en.asterisk.settings.kinds, kind) ? t(`asterisk.settings.kinds.${kind}.label`) : '')
+
+function KindTag({ kind, t }) {
+  const name = kindName(t, kind)
+  return name ? jsx('span', { className: 'asterisk-kind-tag', 'data-asterisk': 'kind', 'data-severity': severity(kind), children: t('asterisk.kindLead', name) }) : null
 }
 
 function Entry({ note, index, numbered, focused, motion, t, watcher }) {
@@ -453,42 +528,53 @@ function Entry({ note, index, numbered, focused, motion, t, watcher }) {
   const open = () => void host.openSession(note.storedId)
   const title = filled(note.title) ? note.title : t('asterisk.untitled')
   const by = note.by === 'user' ? t('asterisk.by.user') : t('asterisk.by.assistant')
+  const hid = `${note.id}-headline`
   const body = expanded
     ? [
         jsx('p', { className: 'asterisk-text', 'data-asterisk': 'text', children: note.text }, 'text'),
-        jsx('p', { className: 'asterisk-meta', 'data-asterisk': 'meta', children: t('asterisk.meta', note.cost, by, here ? '' : title, note.model) }, 'meta'),
+        jsxs('p', { className: 'asterisk-meta', 'data-asterisk': 'meta', children: [numbered ? jsx(KindTag, { kind: note.kind, t }) : null, t('asterisk.meta', note.cost, by, here ? '' : title, note.model)] }, 'meta'),
         jsxs('div', {
           className: 'asterisk-actions',
           children: [
-            jsx(Button, { onClick: () => void watcher.knew(note), children: t('asterisk.knew') }, 'knew'),
-            jsx(Button, { onClick: () => void watcher.notSure(note), children: t('asterisk.notSure') }, 'unsure'),
-            jsx(Button, { onClick: () => void watcher.notUseful(note), children: t('asterisk.notUseful') }, 'not_useful'),
             here
-              ? jsx(Button, { onClick: () => void watcher.ask(note), children: t('asterisk.askInChat') }, 'ask')
-              : jsx(Button, { onClick: open, children: t('asterisk.open') }, 'open'),
-            jsx(Button, { className: 'asterisk-gotit', onClick: () => void watcher.gotIt(note), children: t('asterisk.gotIt') }, 'gotit')
+              ? jsx(Button, { className: 'asterisk-primary', describedBy: hid, signal: 'asked', onClick: () => void watcher.ask(note), children: t('asterisk.askInChat') }, 'ask')
+              : jsx(Button, { className: 'asterisk-primary', describedBy: hid, onClick: open, children: t('asterisk.open') }, 'open'),
+            jsx(Button, { className: 'asterisk-gotit', describedBy: hid, signal: 'read', onClick: () => void watcher.gotIt(note), children: t('asterisk.gotIt') }, 'gotit'),
+            jsxs('span', {
+              className: 'asterisk-rate',
+              role: 'group',
+              'aria-label': t('asterisk.rate'),
+              children: [
+                jsx('span', { className: 'asterisk-rate-label', 'aria-hidden': 'true', children: t('asterisk.rate') }, 'label'),
+                jsx(Button, { className: 'asterisk-quiet', describedBy: hid, signal: 'already_knew', onClick: () => void watcher.knew(note), children: t('asterisk.knew') }, 'knew'),
+                jsx(Button, { className: 'asterisk-quiet', describedBy: hid, signal: 'unsure', onClick: () => void watcher.notSure(note), children: t('asterisk.notSure') }, 'unsure'),
+                jsx(Button, { className: 'asterisk-quiet', describedBy: hid, signal: 'not_useful', onClick: () => void watcher.notUseful(note), children: t('asterisk.notUseful') }, 'not_useful')
+              ]
+            }, 'rate')
           ]
         }, 'actions')
       ]
-    : [jsx('p', { className: 'asterisk-meta asterisk-from', 'data-asterisk': 'meta', children: t('asterisk.from', title, note.cost, note.model) }, 'line')]
+    : [jsxs('p', { className: 'asterisk-meta asterisk-from', 'data-asterisk': 'meta', children: [jsx(KindTag, { kind: note.kind, t }), t('asterisk.from', title, note.cost, note.model)] }, 'line')]
   return jsxs('li', {
     className: numbered ? 'asterisk-entry asterisk-numbered' : 'asterisk-entry',
     'data-asterisk': 'entry',
     'data-expanded': expanded ? 'true' : 'false',
+    'data-severity': severity(note.kind),
     style: motion === 'full' ? { animationDelay: `${index * STAGGER_MS}ms` } : undefined,
     children: [
-      numbered ? jsx('span', { className: 'asterisk-num', 'data-asterisk': 'num', children: String(index + 1) }, 'num') : null,
+      numbered ? jsx('span', { className: 'asterisk-num', 'data-asterisk': 'num', 'aria-hidden': 'true', children: String(index + 1) }, 'num') : null,
       jsxs('div', {
         className: 'asterisk-body',
         children: [
-          jsx('p', {
+          jsx('h3', {
             className: 'asterisk-headline',
-            children: jsxs('span', { className: 'asterisk-h', 'data-asterisk': 'headline', children: [note.headline, jsx(Stroke, {})] })
+            id: hid,
+            children: jsxs('span', { className: 'asterisk-h', 'data-asterisk': 'headline', children: [note.headline, expanded ? jsx(Stroke, {}) : null] })
           }, 'headline'),
           ...body
         ]
       }, 'body'),
-      expanded ? null : jsx('div', { className: 'asterisk-go', children: jsx(Button, { onClick: open, children: t('asterisk.open') }) }, 'go')
+      expanded ? null : jsx('div', { className: 'asterisk-go', children: jsx(Button, { describedBy: hid, onClick: open, children: t('asterisk.open') }) }, 'go')
     ]
   })
 }
@@ -503,64 +589,91 @@ function Chevron() {
   })
 }
 
-/** The `composer.top` contribution: the "Worth knowing" strip, or nothing when no note is pending. */
+function Undo({ held, t, watcher }) {
+  return jsxs('div', {
+    className: 'asterisk-undo',
+    'data-asterisk': 'undo',
+    children: [
+      jsx('span', { children: t('asterisk.recorded', held.label) }),
+      jsx(Button, { onClick: watcher.takeBack, children: t('asterisk.undo') })
+    ]
+  })
+}
+
+/** The `composer.top` contribution: the "Worth knowing" strip, or only a hidden live line when no note is pending. */
 export function createStrip(watcher) {
   return function AsteriskStrip() {
     const list = useValue(watcher.notes)
     const isFolded = useValue(watcher.folded)
+    const held = useValue(watcher.undo)
+    const latest = useValue(watcher.latest)
     const focused = useValue(host.state.focusedStoredSessionId)
     const t = usePluginI18n(ID)
-    if (!list.length) return null
+    const live = jsx('span', { className: 'asterisk-sr', 'data-asterisk': 'live', 'aria-live': 'polite', children: latest ? t('asterisk.announce', latest) : '' }, 'live')
+    if (!list.length && !held) return jsxs(Fragment, { children: [jsx('style', { children: `.asterisk-sr{${SR_CSS}}` }, 'style'), live] })
     const motion = reducedMotion() ? 'reduce' : 'full'
     const numbered = list.length > 1
     const label = t('asterisk.label')
     const foldLabel = isFolded ? t('asterisk.expand') : t('asterisk.collapse')
+    const lead = list.find(n => n.storedId && n.storedId === focused) || list[list.length - 1]
+    const single = list.length === 1 ? kindName(t, list[0].kind) : ''
+    const onKeyDown = event => {
+      if (event.key === 'Escape' && list.length && !isFolded) {
+        event.stopPropagation()
+        watcher.fold()
+      }
+    }
+    const head = list.length
+      ? jsxs('div', {
+          className: 'asterisk-head',
+          children: [
+            jsxs('div', {
+              className: 'asterisk-label',
+              'data-asterisk': 'label',
+              children: [
+                jsx('span', { className: 'asterisk-label-name', children: label }, 'name'),
+                single ? jsx('span', { className: 'asterisk-label-kind', 'data-asterisk': 'kind', 'data-severity': severity(list[0].kind), children: ` · ${single}` }, 'kind') : null,
+                numbered ? jsx('span', { className: 'asterisk-label-count', children: ` · ${t('asterisk.count', list.length)}` }, 'count') : null,
+                isFolded && lead ? jsx('span', { className: 'asterisk-peek', 'data-asterisk': 'peek', children: lead.headline }, 'peek') : null
+              ]
+            }),
+            jsx('button', {
+              type: 'button',
+              className: 'asterisk-fold',
+              'data-asterisk': 'fold',
+              'aria-expanded': isFolded ? 'false' : 'true',
+              'aria-label': foldLabel,
+              title: foldLabel,
+              onClick: watcher.toggleFold,
+              children: jsx(Chevron, {})
+            })
+          ]
+        }, 'head')
+      : null
     return jsxs(Fragment, {
       children: [
-        jsx('style', { children: CSS }),
+        jsx('style', { children: CSS }, 'style'),
+        live,
         jsxs('section', {
           className: 'asterisk-strip',
           'data-asterisk': 'strip',
           role: 'region',
           'aria-label': label,
-          'aria-live': 'polite',
           'data-motion': motion,
           'data-folded': isFolded ? 'true' : 'false',
           'data-count': String(list.length),
+          onKeyDown,
           children: [
-            jsxs('div', {
-              className: 'asterisk-head',
-              children: [
-                jsxs('div', {
-                  className: 'asterisk-label',
-                  'data-asterisk': 'label',
-                  children: [
-                    isFolded
-                      ? jsxs('span', { className: 'asterisk-label-name asterisk-h-label', children: [label, jsx(Stroke, {})] })
-                      : jsx('span', { className: 'asterisk-label-name', children: label }),
-                    isFolded || numbered ? jsx('span', { className: 'asterisk-label-count', children: ` · ${t('asterisk.count', list.length)}` }) : null
-                  ]
-                }),
-                jsx('button', {
-                  type: 'button',
-                  className: 'asterisk-fold',
-                  'data-asterisk': 'fold',
-                  'aria-expanded': isFolded ? 'false' : 'true',
-                  'aria-label': foldLabel,
-                  title: foldLabel,
-                  onClick: watcher.toggleFold,
-                  children: jsx(Chevron, {})
-                })
-              ]
-            }),
-            isFolded
+            head,
+            held ? jsx(Undo, { held, t, watcher }, 'undo') : null,
+            isFolded || !list.length
               ? null
               : jsx('ol', {
                   className: 'asterisk-list',
                   children: list.map((note, index) => jsx(Entry, { note, index, numbered, focused, motion, t, watcher }, note.id))
-                })
+                }, 'list')
           ]
-        })
+        }, 'strip')
       ]
     })
   }
@@ -578,60 +691,74 @@ export function createDot(watcher) {
 }
 
 const SETTINGS_CSS = `
-.asterisk-settings{container-type:inline-size;container-name:asterisk-settings;display:flex;flex-direction:column;gap:28px;min-width:0;max-width:900px;font-family:var(--font-sans);color:var(--ui-text-primary)}
+.asterisk-settings{position:relative;container-type:inline-size;container-name:asterisk-settings;display:flex;flex-direction:column;gap:28px;min-width:0;max-width:900px;font-family:var(--font-sans);color:var(--ui-text-primary)}
 .asterisk-settings section{min-width:0}
 .asterisk-settings h2{margin:0;font-size:15px;font-weight:600;line-height:1.3;color:var(--ui-text-primary)}
-.asterisk-set-note{margin:10px 0 0;font-size:12px;line-height:1.5;color:var(--ui-text-tertiary);min-width:0;overflow-wrap:anywhere}
+.asterisk-saving{position:absolute;top:0;right:0;margin:0;font-size:12px;line-height:1.3;color:var(--ui-text-secondary)}
+.asterisk-set-note{margin:10px 0 0;font-size:12px;line-height:1.5;color:var(--ui-text-secondary);min-width:0;overflow-wrap:anywhere}
 .asterisk-set-status{margin:0;font-size:12.5px;line-height:1.5;color:var(--ui-text-secondary);min-width:0;overflow-wrap:anywhere}
-.asterisk-group{margin:16px 0 2px;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ui-text-tertiary)}
+.asterisk-group{margin:18px 0 2px;font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ui-text-secondary)}
+.asterisk-group-note{margin:2px 0 4px;font-size:12px;line-height:1.45;color:var(--ui-text-secondary)}
 .asterisk-kinds{list-style:none;margin:0;padding:0}
-.asterisk-kind{display:flex;align-items:flex-start;gap:14px;padding:10px 0;border-bottom:1px solid var(--ui-stroke-quaternary)}
-.asterisk-kind-text{flex:1 1 0;min-width:0;overflow-wrap:anywhere}
+.asterisk-kind{padding:10px 0;border-bottom:1px solid var(--ui-stroke-quaternary)}
+.asterisk-kind-main{display:flex;align-items:flex-start;gap:14px}
+.asterisk-kind-text{flex:1 1 0;min-width:0;overflow-wrap:break-word}
 .asterisk-kind-label{margin:0;font-size:13px;font-weight:500;line-height:1.4}
-.asterisk-kind-desc{margin:2px 0 0;font-size:12px;line-height:1.5;color:var(--ui-text-secondary)}
-.asterisk-kind-locked{margin:4px 0 0;font-size:11px;line-height:1.4;color:var(--ui-text-tertiary)}
+.asterisk-kind-desc{margin:2px 0 0;font-size:12px;line-height:1.5;color:var(--ui-text-secondary);text-wrap:pretty}
 .asterisk-settings .asterisk-switch{position:relative;flex:none;width:32px;height:18px;margin-top:2px;padding:0;border:1px solid var(--ui-stroke-secondary);border-radius:9px;background:transparent;cursor:pointer}
 .asterisk-settings .asterisk-switch[aria-checked="true"]{background:var(--ui-accent);border-color:var(--ui-accent)}
-.asterisk-settings .asterisk-switch:disabled{cursor:default;opacity:.55}
+.asterisk-settings .asterisk-switch:disabled{cursor:default}
+.asterisk-settings [aria-disabled="true"]{cursor:progress}
 .asterisk-settings .asterisk-switch:focus-visible,.asterisk-settings .asterisk-tone:focus-visible,.asterisk-settings .asterisk-suggest-btn:focus-visible,.asterisk-settings .asterisk-retry:focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}
-.asterisk-knob{position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:var(--ui-text-tertiary)}
-.asterisk-switch[aria-checked="true"] .asterisk-knob{left:16px;background:var(--ui-bg-chrome)}
-[data-motion="full"] .asterisk-knob{transition:left .15s ease}
+.asterisk-knob{position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:var(--ui-text-secondary)}
+.asterisk-switch[aria-checked="true"] .asterisk-knob{transform:translateX(14px);background:var(--ui-bg-chrome)}
+[data-motion="full"] .asterisk-knob{transition:transform .15s ease}
 .asterisk-tones{display:flex;flex-direction:column;gap:6px;margin-top:12px}
-.asterisk-settings .asterisk-tone{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;min-width:0;padding:8px 12px;font:inherit;text-align:left;border:1px solid var(--ui-stroke-secondary);border-radius:8px;background:transparent;color:var(--ui-text-primary);cursor:pointer;overflow-wrap:anywhere}
+.asterisk-settings .asterisk-tone{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;min-width:0;padding:8px 36px 8px 12px;font:inherit;text-align:left;border:1px solid var(--ui-stroke-secondary);border-radius:8px;background:transparent;color:var(--ui-text-primary);cursor:pointer;overflow-wrap:break-word}
+.asterisk-settings .asterisk-tone:hover{background:var(--ui-control-hover-background)}
 .asterisk-settings .asterisk-tone[aria-checked="true"]{border-color:var(--ui-accent);box-shadow:inset 0 0 0 1px var(--ui-accent)}
-.asterisk-settings .asterisk-tone:disabled,.asterisk-settings .asterisk-suggest-btn:disabled{cursor:default;opacity:.55}
+.asterisk-tone-check{position:absolute;top:50%;right:12px;width:14px;height:14px;margin-top:-7px;color:var(--ui-accent)}
 .asterisk-tone-label{font-size:13px;font-weight:500}
-.asterisk-tone-desc{font-size:12px;line-height:1.45;color:var(--ui-text-tertiary)}
+.asterisk-tone-desc{font-size:12px;line-height:1.45;color:var(--ui-text-secondary)}
 .asterisk-summary{margin:10px 0 0;font-size:12.5px;line-height:1.5;color:var(--ui-text-secondary);min-width:0;overflow-wrap:anywhere}
-.asterisk-suggestion{display:flex;align-items:center;gap:12px;margin-top:12px;padding:10px 12px;min-width:0;border:1px solid var(--ui-stroke-secondary);border-left:2px solid var(--ui-accent);border-radius:8px}
-.asterisk-suggest-text{flex:1 1 0;min-width:0;margin:0;font-size:12px;line-height:1.5;color:var(--ui-text-primary);overflow-wrap:anywhere}
+.asterisk-suggestion{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:10px;padding:10px 12px;min-width:0;border-radius:8px;background:color-mix(in srgb, var(--ui-accent) 10%, transparent)}
+.asterisk-suggest-text{flex:1 1 240px;min-width:0;margin:0;font-size:12px;line-height:1.5;color:var(--ui-text-primary);overflow-wrap:break-word;text-wrap:pretty}
 .asterisk-suggest-acts{display:flex;flex-wrap:wrap;gap:6px;flex:none}
-.asterisk-settings .asterisk-suggest-btn,.asterisk-settings .asterisk-retry{font:inherit;font-size:11.5px;line-height:1.3;padding:3px 10px;border-radius:6px;background:transparent;cursor:pointer;color:var(--ui-text-primary);border:1px solid var(--ui-stroke-secondary)}
+.asterisk-settings .asterisk-suggest-btn,.asterisk-settings .asterisk-retry{${BTN_CSS}}
+.asterisk-settings .asterisk-suggest-btn:hover,.asterisk-settings .asterisk-retry:hover{background:var(--ui-control-hover-background)}
 .asterisk-settings .asterisk-retry{margin-top:10px}
 .asterisk-table-wrap{margin-top:18px;min-width:0;overflow-x:auto}
-.asterisk-table{width:100%;border-collapse:collapse;font-size:11px;line-height:1.35;font-variant-numeric:tabular-nums}
-.asterisk-table caption{padding-bottom:6px;text-align:left;font-size:12px;font-weight:600;color:var(--ui-text-primary)}
-.asterisk-table th,.asterisk-table td{min-width:0;padding:4px 5px;text-align:right;vertical-align:bottom;border-bottom:1px solid var(--ui-stroke-quaternary);overflow-wrap:anywhere}
-.asterisk-table th{font-weight:500;color:var(--ui-text-tertiary);overflow-wrap:normal;hyphens:auto}
+.asterisk-table{width:100%;border-collapse:collapse;font-size:12px;line-height:1.35;font-variant-numeric:tabular-nums}
+.asterisk-table caption{padding-bottom:6px;text-align:left;font-size:12.5px;font-weight:600;color:var(--ui-text-primary)}
+.asterisk-table th,.asterisk-table td{min-width:0;padding:4px 6px;text-align:right;vertical-align:bottom;border-bottom:1px solid var(--ui-stroke-quaternary)}
+.asterisk-table th{font-weight:500;color:var(--ui-text-secondary);overflow-wrap:normal;hyphens:manual}
 .asterisk-table td{color:var(--ui-text-secondary);white-space:nowrap}
-.asterisk-table th:first-child,.asterisk-table td:first-child{text-align:left;color:var(--ui-text-primary);white-space:normal;overflow-wrap:anywhere;min-width:96px}
-.asterisk-legend{margin:14px 0 0;padding:0;list-style:none;font-size:11px;line-height:1.5;color:var(--ui-text-tertiary);min-width:0;overflow-wrap:anywhere}
+.asterisk-table th:first-child,.asterisk-table td:first-child{text-align:left;color:var(--ui-text-primary);white-space:normal;overflow-wrap:break-word;min-width:96px}
+.asterisk-table td.asterisk-key-model{max-width:18ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.asterisk-legend{margin:14px 0 0;padding:0;list-style:none;font-size:12px;line-height:1.5;color:var(--ui-text-secondary);min-width:0;overflow-wrap:break-word;text-wrap:pretty}
 @container asterisk-settings (max-width: 520px){
 .asterisk-table thead{display:none}
 .asterisk-table,.asterisk-table tbody,.asterisk-table tr,.asterisk-table td{display:block;width:auto}
 .asterisk-table caption{display:block}
 .asterisk-table tr{padding:8px 0;border-bottom:1px solid var(--ui-stroke-quaternary)}
 .asterisk-table td{display:flex;justify-content:space-between;gap:12px;padding:2px 0;border:0}
-.asterisk-table td::before{content:attr(data-label);min-width:0;text-align:left;color:var(--ui-text-tertiary)}
+.asterisk-table td::before{content:attr(data-label);min-width:0;text-align:left;color:var(--ui-text-secondary)}
 .asterisk-table td:first-child{font-weight:600}
+.asterisk-table td.asterisk-key-model{max-width:none}
 .asterisk-table td:first-child::before{content:none}
-.asterisk-suggestion{flex-direction:column;align-items:stretch}
 }
 `
 
 const OUTCOME_COLS = ['shown', 'filtered', 'asked', 'read', 'already_knew', 'unsure', 'not_useful', 'open', 'evicted', 'chat_gone', 'unrecorded']
+const RARE_COLS = new Set(['filtered', 'evicted', 'chat_gone', 'unrecorded'])
 const MONEY_COLS = ['checks', 'spend_usd', 'cost_per_asked_usd']
+const RATED_COLS = ['shown', 'asked', 'read', 'already_knew', 'unsure', 'not_useful']
+
+/** The outcome columns worth a column: every common one, and a rare one only when some row has it. */
+export function visibleOutcomes(report) {
+  const rows = report.by_kind || []
+  return OUTCOME_COLS.filter(col => !RARE_COLS.has(col) || rows.some(row => typeof row[col] === 'number' && row[col] > 0))
+}
 
 export function fmtUsd(usd) {
   if (typeof usd !== 'number' || !Number.isFinite(usd) || usd < 0) return ''
@@ -684,56 +811,109 @@ export function createSettings(ctx, hostApi = host) {
 
 const kindLabel = (t, kind) => (kind in en.asterisk.settings.kinds ? t(`asterisk.settings.kinds.${kind}.label`) : t('asterisk.settings.other'))
 
+function Suggestion({ s, busy, t, settings }) {
+  return jsxs('div', {
+    className: 'asterisk-suggestion',
+    'data-asterisk': 'suggestion',
+    'data-kind': s.kind,
+    children: [
+      jsx('p', { className: 'asterisk-suggest-text', children: t('asterisk.settings.suggest', kindLabel(t, s.kind), s.negative, s.rated) }),
+      jsxs('div', {
+        className: 'asterisk-suggest-acts',
+        children: [
+          jsx('button', { type: 'button', className: 'asterisk-suggest-btn', 'data-asterisk': 'turn-off', 'aria-disabled': busy ? 'true' : undefined, onClick: () => void settings.turnOff(s.kind), children: t('asterisk.settings.turnOff') }),
+          jsx('button', { type: 'button', className: 'asterisk-suggest-btn', 'data-asterisk': 'keep', 'aria-disabled': busy ? 'true' : undefined, onClick: () => void settings.keep(s.kind), children: t('asterisk.settings.keep') })
+        ]
+      })
+    ]
+  }, `suggest-${s.kind}`)
+}
+
 function KindsSection({ report, busy, t, settings }) {
   const groups = [...new Set(report.kinds.map(k => k.group))]
+  const suggestions = new Map((report.suggestions || []).map(s => [s.kind, s]))
   return jsxs('section', {
     'data-asterisk': 'kinds',
     children: [
       jsx('h2', { children: t('asterisk.settings.kindsTitle') }),
-      ...groups.map(group => jsxs(Fragment, {
-        children: [
-          jsx('p', { className: 'asterisk-group', 'data-asterisk': 'group', children: t('asterisk.settings.group', group) }),
-          jsx('ul', {
-            className: 'asterisk-kinds',
-            children: report.kinds.filter(k => k.group === group).map(k => {
-              const on = k.locked || report.settings.enabled.includes(k.kind)
-              const label = kindLabel(t, k.kind)
-              return jsxs('li', {
-                className: 'asterisk-kind',
-                'data-asterisk': 'kind-row',
-                'data-kind': k.kind,
-                children: [
-                  jsxs('div', {
-                    className: 'asterisk-kind-text',
-                    children: [
-                      jsx('p', { className: 'asterisk-kind-label', children: label }),
-                      jsx('p', { className: 'asterisk-kind-desc', children: t(`asterisk.settings.kinds.${k.kind}.description`) }),
-                      k.locked ? jsx('p', { className: 'asterisk-kind-locked', 'data-asterisk': 'locked', children: t('asterisk.settings.locked') }) : null
-                    ]
-                  }),
-                  jsx('button', {
-                    type: 'button',
-                    role: 'switch',
-                    className: 'asterisk-switch',
-                    'aria-checked': on ? 'true' : 'false',
-                    'aria-label': label,
-                    disabled: k.locked || busy,
-                    onClick: () => void settings.toggle(k.kind),
-                    children: jsx('span', { className: 'asterisk-knob', 'aria-hidden': 'true' })
-                  })
-                ]
-              }, k.kind)
+      ...groups.map(group => {
+        const members = report.kinds.filter(k => k.group === group)
+        const lockedId = `asterisk-locked-${group}`
+        const anyLocked = members.some(k => k.locked)
+        return jsxs(Fragment, {
+          children: [
+            jsx('p', { className: 'asterisk-group', 'data-asterisk': 'group', children: t('asterisk.settings.group', group) }),
+            anyLocked ? jsx('p', { className: 'asterisk-group-note', id: lockedId, 'data-asterisk': 'locked', children: t('asterisk.settings.locked') }) : null,
+            jsx('ul', {
+              className: 'asterisk-kinds',
+              children: members.map(k => {
+                const on = k.locked || report.settings.enabled.includes(k.kind)
+                const label = kindLabel(t, k.kind)
+                const suggestion = suggestions.get(k.kind)
+                return jsxs('li', {
+                  className: 'asterisk-kind',
+                  'data-asterisk': 'kind-row',
+                  'data-kind': k.kind,
+                  children: [
+                    jsxs('div', {
+                      className: 'asterisk-kind-main',
+                      children: [
+                        jsxs('div', {
+                          className: 'asterisk-kind-text',
+                          children: [
+                            jsx('p', { className: 'asterisk-kind-label', children: label }),
+                            jsx('p', { className: 'asterisk-kind-desc', children: t(`asterisk.settings.kinds.${k.kind}.description`) })
+                          ]
+                        }),
+                        jsx('button', {
+                          type: 'button',
+                          role: 'switch',
+                          className: 'asterisk-switch',
+                          'aria-checked': on ? 'true' : 'false',
+                          'aria-label': label,
+                          'aria-describedby': k.locked ? lockedId : undefined,
+                          'aria-disabled': !k.locked && busy ? 'true' : undefined,
+                          'data-locked': k.locked ? 'true' : undefined,
+                          disabled: k.locked,
+                          onClick: () => void settings.toggle(k.kind),
+                          children: jsx('span', { className: 'asterisk-knob', 'aria-hidden': 'true' })
+                        })
+                      ]
+                    }),
+                    suggestion ? jsx(Suggestion, { s: suggestion, busy, t, settings }) : null
+                  ]
+                }, k.kind)
+              })
             })
-          })
-        ]
-      }, `group-${group}`)),
+          ]
+        }, `group-${group}`)
+      }),
       jsx('p', { className: 'asterisk-set-note', children: t('asterisk.settings.order') })
     ]
   })
 }
 
+function Check() {
+  return jsx('svg', {
+    className: 'asterisk-tone-check',
+    'aria-hidden': 'true',
+    viewBox: '0 0 14 14',
+    children: jsx('path', { d: 'M2.5 7.5 L5.5 10.5 L11.5 3.5', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' })
+  })
+}
+
 function ToneSection({ report, busy, t, settings }) {
   const title = t('asterisk.settings.toneTitle')
+  const tones = report.tones
+  const onKeyDown = event => {
+    const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[event.key]
+    if (!step) return
+    event.preventDefault()
+    const at = Math.max(0, tones.indexOf(report.settings.tone))
+    const next = (at + step + tones.length) % tones.length
+    event.currentTarget.querySelectorAll('[role="radio"]')[next]?.focus()
+    void settings.setTone(tones[next])
+  }
   return jsxs('section', {
     'data-asterisk': 'tone',
     children: [
@@ -742,26 +922,32 @@ function ToneSection({ report, busy, t, settings }) {
         className: 'asterisk-tones',
         role: 'radiogroup',
         'aria-label': title,
-        children: report.tones.map(tone => jsxs('button', {
-          type: 'button',
-          role: 'radio',
-          className: 'asterisk-tone',
-          'data-tone': tone,
-          'aria-checked': report.settings.tone === tone ? 'true' : 'false',
-          disabled: busy,
-          onClick: () => void settings.setTone(tone),
-          children: [
-            jsx('span', { className: 'asterisk-tone-label', children: t(`asterisk.settings.tones.${tone}.label`) }),
-            jsx('span', { className: 'asterisk-tone-desc', children: t(`asterisk.settings.tones.${tone}.description`) })
-          ]
-        }, tone))
+        onKeyDown,
+        children: tones.map(tone => {
+          const checked = report.settings.tone === tone
+          return jsxs('button', {
+            type: 'button',
+            role: 'radio',
+            className: 'asterisk-tone',
+            'data-tone': tone,
+            'aria-checked': checked ? 'true' : 'false',
+            'aria-disabled': busy ? 'true' : undefined,
+            tabIndex: checked ? 0 : -1,
+            onClick: () => void settings.setTone(tone),
+            children: [
+              jsx('span', { className: 'asterisk-tone-label', children: t(`asterisk.settings.tones.${tone}.label`) }),
+              jsx('span', { className: 'asterisk-tone-desc', children: t(`asterisk.settings.tones.${tone}.description`) }),
+              checked ? jsx(Check, {}) : null
+            ]
+          }, tone)
+        })
       }),
       jsx('p', { className: 'asterisk-set-note', children: t('asterisk.settings.toneNote') })
     ]
   })
 }
 
-function Table({ name, caption, keyLabel, rows, cols, label, t }) {
+function Table({ name, caption, keyLabel, rows, cols, label, keyClass, t }) {
   const cell = (row, col) => {
     const v = row[col]
     if (col === 'spend_usd' || col === 'cost_per_asked_usd') return fmtUsd(v) || t('asterisk.settings.none')
@@ -782,7 +968,7 @@ function Table({ name, caption, keyLabel, rows, cols, label, t }) {
         jsx('tbody', {
           children: rows.map(row => jsxs('tr', {
             children: [
-              jsx('td', { 'data-label': keyLabel, children: label(row.key) }, 'key'),
+              jsx('td', { 'data-label': keyLabel, className: keyClass, title: keyClass ? label(row.key) : undefined, children: label(row.key) }, 'key'),
               ...cols.map(col => jsx('td', { 'data-label': t(`asterisk.settings.cols.${col}`), children: cell(row, col) }, col))
             ]
           }, row.key))
@@ -810,38 +996,21 @@ function ReportSection({ report, busy, t, settings }) {
   ].filter(Boolean).join(' · ')
   const toneLabel = key => t(`asterisk.settings.tones.${key}.label`)
   const modelLabel = key => (key === 'unknown' ? t('asterisk.settings.unknownModel') : key)
+  const outcomes = visibleOutcomes(report)
+  const legend = [
+    outcomes.includes('filtered') ? jsx('li', { children: t('asterisk.settings.legendFiltered') }, 'filtered') : null,
+    outcomes.includes('evicted') ? jsx('li', { children: t('asterisk.settings.legendDropped', report.notes_max) }, 'dropped') : null,
+    outcomes.includes('unrecorded') ? jsx('li', { children: t('asterisk.settings.legendUnrecorded') }, 'unrecorded') : null
+  ].filter(Boolean)
   return jsxs('section', {
     'data-asterisk': 'report',
     children: [
       head,
       jsx('p', { className: 'asterisk-summary', 'data-asterisk': 'summary', children: summary }),
-      ...(report.suggestions || []).map(s => jsxs('div', {
-        className: 'asterisk-suggestion',
-        'data-asterisk': 'suggestion',
-        'data-kind': s.kind,
-        children: [
-          jsx('p', { className: 'asterisk-suggest-text', children: t('asterisk.settings.suggest', kindLabel(t, s.kind), s.negative, s.rated) }),
-          jsxs('div', {
-            className: 'asterisk-suggest-acts',
-            children: [
-              jsx('button', { type: 'button', className: 'asterisk-suggest-btn', 'data-asterisk': 'turn-off', disabled: busy, onClick: () => void settings.turnOff(s.kind), children: t('asterisk.settings.turnOff') }),
-              jsx('button', { type: 'button', className: 'asterisk-suggest-btn', 'data-asterisk': 'keep', disabled: busy, onClick: () => void settings.keep(s.kind), children: t('asterisk.settings.keep') })
-            ]
-          })
-        ]
-      }, `suggest-${s.kind}`)),
-      jsx(Table, { name: 'by-kind', caption: t('asterisk.settings.byKind'), keyLabel: t('asterisk.settings.kindCol'), rows: report.by_kind, cols: OUTCOME_COLS, label: key => kindLabel(t, key), t }, 'by-kind'),
-      jsx(Table, { name: 'by-model', caption: t('asterisk.settings.byModel'), keyLabel: t('asterisk.settings.modelCol'), rows: report.by_model || [], cols: [...MONEY_COLS, ...OUTCOME_COLS], label: modelLabel, t }, 'by-model'),
-      jsx(Table, { name: 'by-tone', caption: t('asterisk.settings.byTone'), keyLabel: t('asterisk.settings.toneCol'), rows: report.by_tone || [], cols: [...MONEY_COLS, ...OUTCOME_COLS], label: toneLabel, t }, 'by-tone'),
-      jsxs('ul', {
-        className: 'asterisk-legend',
-        'data-asterisk': 'legend',
-        children: [
-          jsx('li', { children: t('asterisk.settings.legendFiltered') }, 'filtered'),
-          jsx('li', { children: t('asterisk.settings.legendDropped', report.notes_max) }, 'dropped'),
-          jsx('li', { children: t('asterisk.settings.legendUnrecorded') }, 'unrecorded')
-        ]
-      }, 'legend')
+      jsx(Table, { name: 'by-kind', caption: t('asterisk.settings.byKind'), keyLabel: t('asterisk.settings.kindCol'), rows: report.by_kind, cols: outcomes, label: key => kindLabel(t, key), t }, 'by-kind'),
+      jsx(Table, { name: 'by-model', caption: t('asterisk.settings.byModel'), keyLabel: t('asterisk.settings.modelCol'), rows: report.by_model || [], cols: [...MONEY_COLS, ...RATED_COLS], label: modelLabel, keyClass: 'asterisk-key-model', t }, 'by-model'),
+      jsx(Table, { name: 'by-tone', caption: t('asterisk.settings.byTone'), keyLabel: t('asterisk.settings.toneCol'), rows: report.by_tone || [], cols: [...MONEY_COLS, ...RATED_COLS], label: toneLabel, t }, 'by-tone'),
+      legend.length ? jsx('ul', { className: 'asterisk-legend', 'data-asterisk': 'legend', children: legend }, 'legend') : null
     ]
   })
 }
@@ -873,7 +1042,11 @@ export function createSettingsPage(settings) {
       className: 'asterisk-settings',
       'data-asterisk': 'settings',
       'data-motion': motion,
-      children: [jsx('style', { children: SETTINGS_CSS }, 'style'), ...body]
+      children: [
+        jsx('style', { children: SETTINGS_CSS }, 'style'),
+        jsx('p', { className: 'asterisk-saving', 'data-asterisk': 'saving', role: 'status', children: view.busy ? t('asterisk.settings.saving') : '' }, 'saving'),
+        ...body
+      ]
     })
   }
 }
@@ -891,6 +1064,7 @@ export default {
     watcher.capture()
     const unlisten = [host.state.focusedSessionId.listen(watcher.noteFocus), host.state.focusedStoredSessionId.listen(watcher.noteFocus)]
     ctx.onDispose(() => unlisten.forEach(fn => fn?.()))
+    ctx.onDispose(() => void watcher.flush())
     ctx.onEvent('message.complete', event => void watcher.onComplete(event))
     ctx.register({ id: 'headline', area: COMPOSER_AREAS.top, render: createStrip(watcher) })
     ctx.register({ id: 'dot', area: SESSION_ROW_AREAS.trailing, data: { render: createDot(watcher) } })

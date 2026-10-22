@@ -22,15 +22,16 @@
  *      chat (even when another chat is in focus) and the frame's persisted_turn receipt as is; never
  *      the reply's text. A frame without a receipt still posts, with turn: null; the backend's
  *      skip answer { points: [], skipped } shows no note and no toast (the user's live case).
- *   5. The strip: nothing when no note is pending; a point is a note, never a toast. One note: the
- *      label "Worth knowing", no number, headline, sentence, meta "<model> · <cost> · decided by ...",
- *      "Already knew", "Not sure", "Not useful", "Ask in chat" for the focused chat ("Open" for another
- *      chat) and "Got it".
+ *   5. The strip: only its hidden live line when no note is pending; a point is a note, never a
+ *      toast. One note: the label "Worth knowing · <kind>", no number, headline, sentence, meta
+ *      "<model> · <cost> · decided by ...", "Ask in chat" for the focused chat ("Open" for another
+ *      chat), "Got it", then the Rate group "Already knew", "Not sure", "Not useful".
  *      Several notes: "Worth knowing · N notes", numbered 1..N in arrival order; the focused chat's
- *      note expanded, the others one line "<title> · <model> <cost>" ("Untitled chat" without a
- *      title) with "Open" only.
- *   6. Buttons: "Open" opens that note's own chat and keeps the note (it expands once that chat is
- *      focused); "Got it" removes only that note and posts /dismiss { check_at, signal: 'read' };
+ *      note expanded (meta led by its kind), the others one line "<kind> · <title> · <model> <cost>"
+ *      ("Untitled chat" without a title) with "Open" only.
+ *   6. Buttons (click() lets the undo window close; lock 26 holds it open): "Open" opens that note's
+ *      own chat and keeps the note (it expands once that chat is focused); "Got it" removes only that
+ *      note and posts /dismiss { check_at, signal: 'read' };
  *      "Already knew" removes it and posts /dismiss { check_at, signal: 'already_knew' } with that
  *      check's `at`; "Not sure" and "Not useful" the same with signal 'unsure' and 'not_useful' (lock
  *      24); a failed /dismiss is one named error toast; the last note gone, the strip is gone.
@@ -61,9 +62,9 @@
  *      stop, so the next reply is still posted (a model chosen mid-session works on the next reply).
  *      A reply without `model` names no model and leaves no stray separator.
  *  23. Note actions (4.2.0):
- *      (a) buttons: the focused chat's single note [Already knew] [Not sure] [Not useful] [Ask in
- *          chat] [Got it]; a single note of another chat [Already knew] [Not sure] [Not useful]
- *          [Open] [Got it]; a one-line note [Open] only.
+ *      (a) buttons: the focused chat's single note [Ask in chat] [Got it] [Already knew] [Not sure]
+ *          [Not useful]; a single note of another chat [Open] [Got it] [Already knew] [Not sure]
+ *          [Not useful]; a one-line note [Open] only.
  *      (b) Ask in chat: one host.composer.insertText(the note's storedId, "Asterisk: <headline> —
  *          <text>", { mode: 'block' }), a Playful note's kind label in place of its headline (an
  *          unknown kind keeps the headline); true -> the note leaves and /dismiss { check_at, signal:
@@ -71,7 +72,8 @@
  *          asterisk-ask-failed warning; two clicks while pending -> one call; long text in full.
  *      (c) Got it posts signal 'read', Already knew 'already_knew'; a failed post names the button.
  *      (d) fold: the chevron (aria-expanded, Collapse / Expand) folds the strip to "Worth knowing ·
- *          N notes" with the stroke, no entry, dots and REST untouched; unfolds with every note in
+ *          N notes" (one note: its kind) and the focused or newest headline, no stroke, no entry,
+ *          dots and REST untouched; unfolds with every note in
  *          order; a new live note unfolds it; reduced motion animates nothing inline and every CSS
  *          transition or animation is keyed on [data-motion="full"].
  *      (e) restart: a fresh registration posts /notes {} once after /status (never when ready: false
@@ -83,10 +85,9 @@
  *      (f) 13e's variant without host.composer.insertText.
  *      (g) every t() key resolves, the new ones included (lock 11's count raised).
  *  24. Not sure and Not useful (4.3.0):
- *      (a) every expanded note offers five buttons [Already knew] [Not sure] [Not useful] [Ask in
- *          chat | Open] [Got it]: focused, another chat's, the expanded note of a numbered list,
- *          under reduced motion and restored; Not sure and Not useful are neutral .asterisk-btn
- *          with no class of their own.
+ *      (a) every expanded note offers five buttons [Ask in chat | Open] [Got it] [Already knew]
+ *          [Not sure] [Not useful]: focused, another chat's, the expanded note of a numbered list,
+ *          under reduced motion and restored; the last three are .asterisk-quiet in a "Rate" group.
  *      (b)-(d) run once for Not useful (signal 'not_useful') and once for Not sure ('unsure'):
  *      (b) the button on a single note removes it, posts /dismiss { check_at, signal } with its
  *          check's `at`, shows no toast; the last note gone, the strip and the chat's dot go.
@@ -97,6 +98,30 @@
  *          .asterisk-entry.asterisk-numbered keep their minmax(0,1fr) text column (the jsdom half of
  *          "the row fits"; tests/preview_strip.mjs measures it).
  *      (f) the keys 'asterisk.notSure' and 'asterisk.notUseful' resolve (lock 23g's count raised).
+ *  25. The settings page (see its checks): kinds with switches, tone radios, the report tables, the
+ *      suggestion, save and load errors.
+ *  26. The interface pass (4.6.0):
+ *      (a) the live line: the strip is not itself aria-live; a hidden .asterisk-sr line (polite)
+ *          holds "Worth knowing: <headline>" of the newest live note, and stays mounted with no note.
+ *      (b) headline and buttons: the headline is an h3 with an id that every button of its note
+ *          names in aria-describedby; Ask in chat (Open) is .asterisk-primary.
+ *      (c) kind and severity: a single note's label names its kind; an irreversible or security
+ *          note carries data-severity="high" on its entry and kind tag; a one-line note has no stroke.
+ *      (d) undo: a rating or Got it removes the note at once and holds its /dismiss for 5 s behind
+ *          "Recorded: <label>." and Undo; Undo puts the note back in place and posts nothing; a
+ *          second click closes the first window (posting it); the window closing posts the
+ *          signal; dispose posts an open window. Ask in chat posts at once.
+ *      (e) keys: Escape inside the strip folds it; in the tone group the arrow keys select and
+ *          focus the next or previous tone, wrapping; only the checked tone is tabbable and has the
+ *          hidden check mark.
+ *      (f) settings: the locked reason is said once under Priority 1 and describes both locked
+ *          switches; the suggestion sits in its kind's row; rare outcome columns (filtered,
+ *          dropped, chat deleted, unrecorded) appear only when a kind row has one, with their
+ *          legend line; model and tone tables show money and rated columns; model ids carry a
+ *          title; a pending save marks controls aria-disabled (they keep focus) and shows "Saving…",
+ *          and a click meanwhile sends nothing.
+ *      (g) CSS: no font size under 12px in the strip or the page, 24px targets, a high note's
+ *          stroke in --ui-red without animation, no side border thicker than 1px.
  *  REST counts in locks 1-12 count /check and /dismiss calls only (/status and /notes have their own
  *  lists). The stub's host.composer.insertText records its calls and resolves a settable result, or
  *  rejects, or waits (deferred) until the lock resolves it.
@@ -195,11 +220,31 @@ const stub = await import(pathToFileURL(path.join(OUT, 'sdk-stub.mjs')).href)
 const mod = await import(pathToFileURL(path.join(OUT, 'plugin-under-test.mjs')).href)
 
 let failures = 0
+let SETTINGS_TEXT = ''
 const check = (ok, what) => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${what}`)
   if (!ok) failures++
 }
 const settle = () => new Promise(r => setTimeout(r, 0))
+// The undo window: a 5 s timer is held here instead of running; elapse() runs the held ones (the
+// window closing), so a lock decides whether a click's /dismiss goes out now or after Undo.
+const realSetTimeout = globalThis.setTimeout
+const realClearTimeout = globalThis.clearTimeout
+const held = new Map()
+let heldSeq = 0
+globalThis.setTimeout = (fn, ms, ...a) => {
+  if (ms !== 5000) return realSetTimeout(fn, ms, ...a)
+  const id = `held-${++heldSeq}`
+  held.set(id, () => fn(...a))
+  return id
+}
+globalThis.clearTimeout = id => (typeof id === 'string' && id.startsWith('held-') ? held.delete(id) : realClearTimeout(id))
+const elapse = () => act(async () => {
+  const due = [...held.values()]
+  held.clear()
+  due.forEach(fn => fn())
+  await settle()
+})
 const reactWarnings = []
 const consoleError = console.error
 console.error = (...a) => { reactWarnings.push(a.map(String).join(' ')) }
@@ -266,7 +311,8 @@ const mount = element => {
 const $ = (el, sel) => el.querySelector(sel)
 const $$ = (el, sel) => [...el.querySelectorAll(sel)]
 const text = el => (el?.textContent ?? '').trim()
-const click = el => act(async () => { el.click(); await settle() })
+const clickHeld = el => act(async () => { el.click(); await settle() })
+const click = async el => { await clickHeld(el); await elapse() }
 // The note's action buttons; the header's chevron (no text) is checked on its own.
 const buttons = el => $$(el, 'button:not([data-asterisk="fold"])').map(b => text(b))
 const button = (el, label) => $$(el, 'button').find(b => text(b) === label)
@@ -297,7 +343,11 @@ function Row({ sessionId }) {
 }
 const rows = Object.fromEntries(ROWS.map(id => [id, mount(createElement(Row, { sessionId: id }))]))
 const dots = () => Object.fromEntries(ROWS.map(id => [id, $$(rows[id].el, '[data-asterisk="dot"]').length]))
-check(strip.el.innerHTML === '' && ROWS.every(id => rows[id].el.innerHTML === ''), 'with no notes the strip renders nothing and no row has a dot')
+const live = () => $(strip.el, '[data-asterisk="live"]')
+const stripGone = () => !$(strip.el, '[data-asterisk="strip"]') && !$(strip.el, '[data-asterisk="undo"]') && $$(strip.el, '*').every(e => ['STYLE', 'SPAN'].includes(e.tagName))
+check(stripGone() && live()?.getAttribute('aria-live') === 'polite' && live()?.className === 'asterisk-sr' && text(live()) === ''
+  && ROWS.every(id => rows[id].el.innerHTML === ''),
+  '26. with no notes the strip renders only its hidden, empty live line (aria-live polite, .asterisk-sr) and no row has a dot')
 check(stub.i18n.ids.has('asterisk'), 'React copy comes from usePluginI18n(\'asterisk\')')
 
 // 2. which replies
@@ -330,8 +380,11 @@ check(!('text' in (body1 || {})) && !JSON.stringify(body1).includes(LONG.slice(0
 check(stub.calls.notify.length === 0, `a point is a note, not a toast (${stub.calls.notify.length} notify calls)`)
 let s = $(strip.el, '[data-asterisk="strip"]')
 check(s?.getAttribute('data-count') === '1' && s?.getAttribute('role') === 'region' && s?.getAttribute('aria-label') === 'Worth knowing'
-  && s?.getAttribute('aria-live') === 'polite', `one strip, data-count 1, a labelled live region (${s?.outerHTML.slice(0, 160)})`)
-check(text($(s, '[data-asterisk="label"]')) === 'Worth knowing', `the label is exactly "Worth knowing" (${text($(s, '[data-asterisk="label"]'))})`)
+  && !s?.hasAttribute('aria-live') && text(live()) === `Worth knowing: ${H1}` && !s.contains(live()),
+  `26. one strip, data-count 1, a labelled region that is not itself live; the hidden live line names the new note (${text(live())})`)
+check(text($(s, '[data-asterisk="label"]')) === 'Worth knowing · Unstated tradeoff' && text($(s, '.asterisk-label-name')) === 'Worth knowing'
+  && $(s, '[data-asterisk="label"] [data-asterisk="kind"]') && !$(s, '[data-asterisk="label"] [data-asterisk="kind"]').hasAttribute('data-severity'),
+  `26. a single note's label names its kind: "Worth knowing · Unstated tradeoff" (${text($(s, '[data-asterisk="label"]'))})`)
 let entries = $$(strip.el, '[data-asterisk="entry"]')
 check(entries.length === 1 && $(s, 'ol') && entries[0].parentElement.tagName === 'OL' && $$(s, '[data-asterisk="num"]').length === 0,
   'one entry in an ordered list, no number for a single note')
@@ -341,11 +394,17 @@ const stroke = $(entries[0], '[data-asterisk="stroke"]')
 check(stroke?.getAttribute('aria-hidden') === 'true' && stroke?.getAttribute('viewBox') === '0 0 200 8' && stroke?.getAttribute('preserveAspectRatio') === 'none'
   && stroke?.querySelector('path')?.getAttribute('d') === 'M2 5 C 40 2, 80 7, 120 4 S 180 3, 198 5', 'the headline is underlined by the hidden SVG stroke')
 check(text($(entries[0], '[data-asterisk="meta"]')) === 'fake-model-x · ~$0.02 · decided by assistant', `meta: the model that answered, the cost, who decided (${text($(entries[0], '[data-asterisk="meta"]'))})`)
-const FOCUSED5 = ['Already knew', 'Not sure', 'Not useful', 'Ask in chat', 'Got it']
-const OTHER5 = ['Already knew', 'Not sure', 'Not useful', 'Open', 'Got it']
+const FOCUSED5 = ['Ask in chat', 'Got it', 'Already knew', 'Not sure', 'Not useful']
+const OTHER5 = ['Open', 'Got it', 'Already knew', 'Not sure', 'Not useful']
+const rateGroup = $(strip.el, '.asterisk-rate')
+const hid = $(entries[0], 'h3.asterisk-headline')?.id
 check(same(buttons(strip.el), FOCUSED5) && $$(strip.el, 'button').every(b => b.getAttribute('type') === 'button')
-  && button(strip.el, 'Not sure')?.className === 'asterisk-btn' && button(strip.el, 'Not useful')?.className === 'asterisk-btn',
-  `23a/24a. the focused chat's single note offers [Already knew] [Not sure] [Not useful] [Ask in chat] [Got it], no "Open"; Not sure and Not useful are neutral asterisk-btns (${buttons(strip.el)})`)
+  && button(strip.el, 'Ask in chat')?.className === 'asterisk-btn asterisk-primary' && button(strip.el, 'Got it')?.className === 'asterisk-btn asterisk-gotit'
+  && ['Already knew', 'Not sure', 'Not useful'].every(l => button(strip.el, l)?.className === 'asterisk-btn asterisk-quiet' && rateGroup?.contains(button(strip.el, l)))
+  && rateGroup?.getAttribute('role') === 'group' && rateGroup?.getAttribute('aria-label') === 'Rate' && !rateGroup.contains(button(strip.el, 'Got it')),
+  `23a/24a/26. the focused chat's single note offers [Ask in chat] (primary) [Got it], then a "Rate" group [Already knew] [Not sure] [Not useful]; no "Open" (${buttons(strip.el)})`)
+check(Boolean(hid) && $$(entries[0], 'button').every(b => b.getAttribute('aria-describedby') === hid) && text(document.getElementById(hid)) === H1,
+  `26. the headline is an h3 with an id, and every button of the note is described by it (${hid})`)
 check(pet.said.length === 0, 'no pet on screen -> nothing is said')
 const texts = []
 const collect = el => {
@@ -388,11 +447,13 @@ check(s?.getAttribute('data-count') === '3' && text($(s, '[data-asterisk="label"
 check(same($$(s, '[data-asterisk="num"]').map(text), ['1', '2', '3']) && same(entries.map(e => text($(e, '[data-asterisk="headline"]'))), [H1, 'Old backups deleted', 'Release tag pushed']),
   'numbered 1, 2, 3 in arrival order')
 check(entries[2].getAttribute('data-expanded') === 'true' && text($(entries[2], '[data-asterisk="text"]')).startsWith('The assistant pushed')
-  && text($(entries[2], '[data-asterisk="meta"]')) === 'fake-model-x · ~$0.04 · decided by assistant' && same(buttons(entries[2]), FOCUSED5),
+  && text($(entries[2], '[data-asterisk="meta"]')) === 'Unstated tradeoff · fake-model-x · ~$0.04 · decided by assistant' && same(buttons(entries[2]), FOCUSED5),
   `24a. the focused chat's note of a numbered list is expanded, with [Already knew] [Not sure] [Not useful] [Ask in chat] [Got it] (${text($(entries[2], '[data-asterisk="meta"]'))} | ${buttons(entries[2])})`)
-check(entries[0].getAttribute('data-expanded') === 'false' && !$(entries[0], '[data-asterisk="text"]') && text($(entries[0], '[data-asterisk="meta"]')) === 'Deploy plan · fake-model-x ~$0.02'
+check(entries[0].getAttribute('data-expanded') === 'false' && !$(entries[0], '[data-asterisk="text"]') && text($(entries[0], '[data-asterisk="meta"]')) === 'Unstated tradeoff · Deploy plan · fake-model-x ~$0.02'
   && same(buttons(entries[0]), ['Open']), `23a. another chat's note is one line "<title> · <model> <cost>" and only "Open" (${text($(entries[0], '[data-asterisk="meta"]'))} | ${buttons(entries[0])})`)
-check(text($(entries[1], '[data-asterisk="meta"]')) === 'Untitled chat · fake-model-x <$0.01' && same(buttons(entries[1]), ['Open']),
+check(text($(entries[1], '[data-asterisk="meta"]')) === 'Irreversible step · Untitled chat · fake-model-x <$0.01' && same(buttons(entries[1]), ['Open'])
+  && $(entries[1], '[data-asterisk="kind"]')?.getAttribute('data-severity') === 'high' && entries[1].getAttribute('data-severity') === 'high'
+  && !entries[0].hasAttribute('data-severity') && !$(entries[1], '[data-asterisk="stroke"]') && $(entries[2], '[data-asterisk="stroke"]'),
   `a note without a title shows "Untitled chat" (${text($(entries[1], '[data-asterisk="meta"]'))})`)
 check(same(dots(), { 'st-1': 1, 'st-2': 1, 'st-3': 1, 'st-4': 0, 'st-5': 0 }) && $$(rows['st-2'].el, '[data-asterisk="dot"]')[0]?.getAttribute('aria-label') === 'Worth knowing: a note waiting'
   && $$(rows['st-2'].el, '[data-asterisk="dot"]')[0]?.getAttribute('title') === 'Worth knowing: a note waiting',
@@ -417,12 +478,12 @@ await click(fold)
 s = $(strip.el, '[data-asterisk="strip"]')
 fold = $(strip.el, '[data-asterisk="fold"]')
 let label = $(s, '[data-asterisk="label"]')
-check(s?.getAttribute('data-folded') === 'true' && !$(s, 'ol') && $$(strip.el, '[data-asterisk="entry"]').length === 0 && text(label) === 'Worth knowing · 3 notes'
-  && $(label, '[data-asterisk="stroke"]')?.querySelector('path')?.getAttribute('d') === 'M2 5 C 40 2, 80 7, 120 4 S 180 3, 198 5'
-  && text($(label, '[data-asterisk="stroke"]')?.parentElement) === 'Worth knowing'
+check(s?.getAttribute('data-folded') === 'true' && !$(s, 'ol') && $$(strip.el, '[data-asterisk="entry"]').length === 0
+  && text($(label, '.asterisk-label-name')) === 'Worth knowing' && text($(label, '.asterisk-label-count')) === '· 3 notes'
+  && text($(label, '[data-asterisk="peek"]')) === 'Release tag pushed' && !$(label, '[data-asterisk="stroke"]')
   && fold?.getAttribute('aria-expanded') === 'false' && fold?.getAttribute('aria-label') === 'Expand' && fold?.getAttribute('title') === 'Expand'
   && same(dots(), DOTS3) && rest.length === restFold && notesCalls.length === notesFold && statusCalls.length === statusFold && s.getAttribute('data-count') === '3',
-  `23d. a click folds: data-folded "true", no entry, label "Worth knowing · 3 notes" with the stroke under the name, "Expand", dots unchanged, no REST call (${text(label)} | ${JSON.stringify(dots())})`)
+  `23d/26. a click folds: data-folded "true", no entry, label "Worth knowing · 3 notes" and the focused chat's headline, no stroke, "Expand", dots unchanged, no REST call (${text(label)} | ${JSON.stringify(dots())})`)
 collect(strip.el)
 reduce = true
 strip.rerender(createElement(stripC.render))
@@ -472,7 +533,7 @@ check(stub.calls.opened.at(-1) === 'st-1' && $$(strip.el, '[data-asterisk="entry
 await focus('rt-1', 'st-1')
 entries = $$(strip.el, '[data-asterisk="entry"]')
 check(entries[0].getAttribute('data-expanded') === 'true' && entries[2].getAttribute('data-expanded') === 'false'
-  && text($(entries[2], '[data-asterisk="meta"]')) === 'Release notes · fake-model-x ~$0.04', 'once that chat is focused its note is expanded, the others collapse')
+  && text($(entries[2], '[data-asterisk="meta"]')) === 'Unstated tradeoff · Release notes · fake-model-x ~$0.04', 'once that chat is focused its note is expanded, the others collapse')
 
 // 6. Got it
 let posts = rest.length
@@ -492,7 +553,7 @@ await click(button(entries[0], 'Already knew'))
 check(rest.length === posts + 2 && same(rest.at(-1), ['/dismiss', { method: 'POST', body: { check_at: 2000.25, signal: 'already_knew' } }])
   && $$(strip.el, '[data-asterisk="entry"]').length === 1, `23c. "Already knew" removes the note and posts /dismiss { check_at, signal: 'already_knew' } with its check's at (${JSON.stringify(rest.at(-1))})`)
 entries = $$(strip.el, '[data-asterisk="entry"]')
-check(text($(strip.el, '[data-asterisk="label"]')) === 'Worth knowing' && $$(strip.el, '[data-asterisk="num"]').length === 0
+check(text($(strip.el, '[data-asterisk="label"]')) === 'Worth knowing · Unstated tradeoff' && $$(strip.el, '[data-asterisk="num"]').length === 0
   && text($(entries[0], '[data-asterisk="meta"]')) === 'Release notes · fake-model-x · ~$0.04 · decided by assistant' && same(buttons(entries[0]), OTHER5),
   `23a/24a. a single note of another chat is expanded, names its chat and offers [Already knew] [Not sure] [Not useful] [Open] [Got it] (${text($(entries[0], '[data-asterisk="meta"]'))} | ${buttons(entries[0])})`)
 collect(strip.el)
@@ -503,7 +564,7 @@ await click(button(entries[0], 'Already knew'))
 let n = stub.calls.notify.at(-1)
 check(stub.calls.notify.length === 1 && n?.id === 'asterisk-feedback-error' && n?.kind === 'error' && n?.title === 'Asterisk'
   && n?.message === 'Could not record "Already knew": network down', `23c. a failed /dismiss from "Already knew" is one named error toast (${JSON.stringify(n)})`)
-check(strip.el.innerHTML === '' && ROWS.every(id => rows[id].el.innerHTML === ''), 'the last note removed, the strip and every dot are gone')
+check(stripGone() && ROWS.every(id => rows[id].el.innerHTML === ''), 'the last note removed, the strip and every dot are gone')
 
 // 10. errors
 const toasts = stub.calls.notify.length
@@ -512,10 +573,10 @@ reply = { points: [{ kind: 'cost', by: 'user', text: 'No headline here.' }], cos
 await emit('rt-3', frame('four', 40))
 n = stub.calls.notify.at(-1)
 check(stub.calls.notify.length === toasts + 1 && n?.id === 'asterisk-error' && n?.message === 'Could not check a reply: the answer has no headline'
-  && strip.el.innerHTML === '', `a point without a headline is one error toast and no note (${n?.message})`)
+  && stripGone(), `a point without a headline is one error toast and no note (${n?.message})`)
 reply = { points: [], cost_usd: 0.02, cost_status: 'estimated', model: 'fake-model-x', at: 4001, title: null }
 await emit('rt-3', frame('five', 50))
-check(strip.el.innerHTML === '' && stub.calls.notify.length === toasts + 1, 'nothing to flag -> no note, no toast')
+check(stripGone() && stub.calls.notify.length === toasts + 1, 'nothing to flag -> no note, no toast')
 restFails = 'model call failed (APITimeoutError)'
 await emit('rt-3', frame('six', 60))
 n = stub.calls.notify.at(-1)
@@ -539,7 +600,7 @@ await emit('rt-3', { status: 'complete', text: 'Short, no receipt.' })
 const body3 = rest.at(-1)?.[1]?.body
 check(rest.length === before + 1 && body3?.session_id === 'st-3' && 'turn' in body3 && body3.turn === null,
   `a complete short reply without a receipt is posted with turn: null (${JSON.stringify(body3)})`)
-check(strip.el.innerHTML === '' && stub.calls.notify.length === toastsShort,
+check(stripGone() && stub.calls.notify.length === toastsShort,
   `a skipped: 'no_receipt' answer shows no note and no toast (${stub.calls.notify.length - toastsShort} toasts)`)
 // 4. a malformed receipt is still the error toast
 restFails = 'turn ids missing or malformed'
@@ -573,7 +634,7 @@ check(rest.length === postsNoModel + 1 && rest.at(-1)?.[0] === '/check' && rest.
 const laterMeta = text($(strip.el, '[data-asterisk="meta"]'))
 check(laterMeta === 'Later chat · ~$0.02 · decided by assistant', `a reply without model shows no model and no stray separator (${laterMeta})`)
 await click(button(strip.el, 'Got it'))
-check(strip.el.innerHTML === '', 'that note dismissed, the strip is gone')
+check(stripGone(), 'that note dismissed, the strip is gone')
 
 // 23b. Ask in chat: the note goes into ITS chat's composer (block mode, never sent); only a true insert removes it
 console.warn = () => {}
@@ -615,7 +676,7 @@ await act(async () => {
   await settle()
   await settle()
 })
-check(strip.el.innerHTML === '' && rest.length === postsAsk + 1 && same(rest.at(-1), ['/dismiss', { method: 'POST', body: { check_at: 5000.5, signal: 'asked' } }])
+check(stripGone() && rest.length === postsAsk + 1 && same(rest.at(-1), ['/dismiss', { method: 'POST', body: { check_at: 5000.5, signal: 'asked' } }])
   && stub.calls.notify.length === toastsAsk,
   `23b. insert answers true: the note leaves and /dismiss { check_at, signal: 'asked' } is posted, no toast (${JSON.stringify(rest.at(-1))})`)
 check(ins.every(c => c[0] === 'st-3' && c[1] === ASK && same(c[2], { mode: 'block' })) && ASK.includes(AH) && ASK.includes(AT) && ASK.length === AH.length + AT.length + 13,
@@ -627,7 +688,7 @@ for (const [kind, lead, at, row] of [['unanswered', 'Left unanswered', 5050.5, 1
   reply = { points: [point('The typo survived the cleanup', PLAY_TEXT, 'assistant', kind)], cost_usd: 0.01, cost_status: 'estimated', model: 'fake-model-x', at, title: 'Ask chat', tone: 'playful' }
   await emit('rt-3', frame(`playful ${kind}`, row))
   await click(button(strip.el, 'Ask in chat'))
-  check(same(ins.at(-1), ['st-3', `Asterisk: ${lead} — ${PLAY_TEXT}`, { mode: 'block' }]) && strip.el.innerHTML === '',
+  check(same(ins.at(-1), ['st-3', `Asterisk: ${lead} — ${PLAY_TEXT}`, { mode: 'block' }]) && stripGone(),
     `23b. a Playful ${kind} note inserts "Asterisk: ${lead} — <text>" and leaves (${JSON.stringify(ins.at(-1)?.[1])})`)
 }
 
@@ -640,7 +701,7 @@ await click(button(strip.el, 'Got it'))
 restFails = null
 addedAsk = stub.calls.notify.slice(toastsAsk)
 check(addedAsk.length === 1 && addedAsk[0].id === 'asterisk-feedback-error' && addedAsk[0].kind === 'error' && addedAsk[0].message === 'Could not record "Got it": network down'
-  && same(rest.at(-1), ['/dismiss', { method: 'POST', body: { check_at: 5100.5, signal: 'read' } }]) && strip.el.innerHTML === '',
+  && same(rest.at(-1), ['/dismiss', { method: 'POST', body: { check_at: 5100.5, signal: 'read' } }]) && stripGone(),
   `23c. a failed /dismiss from "Got it" is one named error toast 'Could not record "Got it": network down' (${JSON.stringify(addedAsk)})`)
 
 // 24b-d run once per new button: Not useful (signal 'not_useful') and Not sure (signal 'unsure')
@@ -653,7 +714,7 @@ for (const [label, signal, shift, base] of [['Not useful', 'not_useful', 0, 212]
   const dotBefore = dots()['st-3']
   await click(button(strip.el, label))
   check(dotBefore === 1 && rest.length === posts24 + 1 && same(rest.at(-1), ['/dismiss', { method: 'POST', body: { check_at: 5110.5 + shift, signal } }])
-    && stub.calls.notify.length === toasts24 && strip.el.innerHTML === '' && ROWS.every(id => rows[id].el.innerHTML === ''),
+    && stub.calls.notify.length === toasts24 && stripGone() && ROWS.every(id => rows[id].el.innerHTML === ''),
     `24b. "${label}" on a single note removes it, posts /dismiss { check_at, signal: '${signal}' } with its check's at, no toast; the strip and the chat's dot are gone (${JSON.stringify(rest.at(-1))})`)
 
   // 24c. on the expanded note of a numbered list it removes only that note and renumbers the rest
@@ -685,7 +746,7 @@ for (const [label, signal, shift, base] of [['Not useful', 'not_useful', 0, 212]
   await click(button(strip.el, label))
   restFails = null
   addedAsk = stub.calls.notify.slice(toastsAsk)
-  check(strip.el.innerHTML === '' && addedAsk.length === 1 && same(addedAsk[0], { id: 'asterisk-feedback-error', kind: 'error', title: 'Asterisk', message: `Could not record "${label}": network down` })
+  check(stripGone() && addedAsk.length === 1 && same(addedAsk[0], { id: 'asterisk-feedback-error', kind: 'error', title: 'Asterisk', message: `Could not record "${label}": network down` })
     && same(rest.at(-1), ['/dismiss', { method: 'POST', body: { check_at: 5130.5 + shift, signal } }]),
     `24d. a failed /dismiss from "${label}" is one toast 'Could not record "${label}": network down' (${JSON.stringify(addedAsk)})`)
 }
@@ -696,8 +757,9 @@ await emit('rt-3', frame('fold one', 220))
 await click($(strip.el, '[data-asterisk="fold"]'))
 s = $(strip.el, '[data-asterisk="strip"]')
 label = $(s, '[data-asterisk="label"]')
-check(s?.getAttribute('data-folded') === 'true' && text(label) === 'Worth knowing · 1 note' && $(label, '[data-asterisk="stroke"]') && $$(strip.el, '[data-asterisk="entry"]').length === 0,
-  `23d. one note folded: label "Worth knowing · 1 note" with the stroke, no entry (${text(label)})`)
+check(s?.getAttribute('data-folded') === 'true' && text(label) === 'Worth knowing · Unstated tradeoffFolded alone' && text($(label, '[data-asterisk="peek"]')) === 'Folded alone'
+  && !$(label, '[data-asterisk="stroke"]') && $$(strip.el, '[data-asterisk="entry"]').length === 0,
+  `23d/26. one note folded: label "Worth knowing · <kind>" and its headline, no stroke, no entry (${text(label)})`)
 const postsFold = rest.length
 reply = { points: [point('Unfolds it', 'The assistant renamed the branch without saying the PR now points nowhere.')], cost_usd: 0.01, cost_status: 'estimated', model: 'fake-model-x', at: 5300.5, title: null }
 await emit('rt-3', frame('fold two', 230))
@@ -708,7 +770,7 @@ check(s?.getAttribute('data-folded') === 'false' && $(s, '[data-asterisk="fold"]
 await click(button(strip.el, 'Got it'))
 await click(button(strip.el, 'Got it'))
 console.warn = warn
-check(strip.el.innerHTML === '' && same(rest.slice(-2).map(r => r[1].body), [{ check_at: 5200.5, signal: 'read' }, { check_at: 5300.5, signal: 'read' }]),
+check(stripGone() && same(rest.slice(-2).map(r => r[1].body), [{ check_at: 5200.5, signal: 'read' }, { check_at: 5300.5, signal: 'read' }]),
   'both notes dismissed with "Got it" (two read signals), the strip is gone')
 check(mod.fmtCost(null, 'unknown') === '' && mod.fmtCost(0.7, 'unknown') === '' && mod.fmtCost(0, 'included') === 'subscription' && mod.fmtCost(0.38, 'actual') === '$0.38',
   'cost text: unpriced is empty even with an amount stored, subscription named, billed as is')
@@ -913,7 +975,7 @@ let re = $$(m.strip.el, '[data-asterisk="entry"]')
 check([E1, E2, NO_HEAD].every(e => same(Object.keys(e).sort(), KEYS14)) && same(r1.notes, [{ method: 'POST', body: {} }])
   && same(m.heads(), ['Restored first', 'Restored second']) && same($$(rs, '[data-asterisk="num"]').map(text), ['1', '2']) && rs?.getAttribute('data-folded') === 'false'
   && re[1]?.getAttribute('data-expanded') === 'true' && same(buttons(re[1]), FOCUSED5)
-  && re[0]?.getAttribute('data-expanded') === 'false' && same(buttons(re[0]), ['Open']) && text($(re[0], '[data-asterisk="meta"]')) === 'Old chat · fake-model-x ~$0.02'
+  && re[0]?.getAttribute('data-expanded') === 'false' && same(buttons(re[0]), ['Open']) && text($(re[0], '[data-asterisk="meta"]')) === 'Unstated tradeoff · Old chat · fake-model-x ~$0.02'
   && same(m.dots(), { 'st-1': 0, 'st-2': 0, 'st-3': 0, 'st-4': 1, 'st-5': 1 }) && petR.said.length === 0,
   `23e/24a. restart: /notes entries in the backend's shape show numbered in at order, the focused one expanded with [Already knew] [Not sure] [Not useful] [Ask in chat] [Got it], the right dots, no pet line, not folded (${m.heads()} | ${JSON.stringify(m.dots())} | ${petR.said.length} pet lines)`)
 check(stub.calls.notify.length === toastsR && !m.heads().includes('x'), `23e. an entry without a headline is skipped with no toast (${stub.calls.notify.length - toastsR} toasts)`)
@@ -949,7 +1011,7 @@ await act(async () => {
   await settle()
 })
 rs = $(m.strip.el, '[data-asterisk="strip"]')
-check(rs?.getAttribute('data-folded') === 'true' && text($(rs, '[data-asterisk="label"]')) === 'Worth knowing · 2 notes',
+check(rs?.getAttribute('data-folded') === 'true' && text($(rs, '.asterisk-label-count')) === '· 2 notes',
   `23e. restored notes do not unfold a folded strip (${rs?.getAttribute('data-folded')}, ${text($(rs, '[data-asterisk="label"]'))})`)
 await click($(m.strip.el, '[data-asterisk="fold"]'))
 check(same(liveHeads, ['Live and stored', 'Dismissed early']) && dismissedR && same(r2.notes, [{ method: 'POST', body: {} }])
@@ -995,9 +1057,9 @@ const REPORT = {
     cost_per_asked_usd: k === 'plain' ? 0.05 : null, ...outc(k === 'plain' ? { shown: 5, asked: 2 } : {}) })),
   suggestions: [{ kind: 'result', negative: 12, rated: 15 }]
 }
-const SUGGEST = 'Turn off Doubtful result? 12 of the last 15 rated notes were Not useful or Already knew. Turning it off stops Asterisk looking for it; you can turn it back on above.'
-const COLS_MODEL = ['Model', 'Checks', 'Spent', 'Per asked note', 'Shown', 'Filtered', 'Asked', 'Read', 'Already knew', 'Not sure', 'Not useful', 'Open', 'Dropped',
-  'Chat deleted', 'Unrecorded']
+const SUGGEST = 'Turn off Doubtful result? 12 of the last 15 rated notes were Not useful or Already knew. Turning it off stops Asterisk looking for it; you can turn it back on with its switch.'
+const COLS_MODEL = ['Model', 'Checks', 'Spent', 'Per asked note', 'Shown', 'Asked', 'Got it', 'Already knew', 'Not sure', 'Not useful']
+const COLS_KIND = ['Kind', 'Shown', 'Asked', 'Got it', 'Already knew', 'Not sure', 'Not useful', 'Open', 'Unrecorded']
 /** One registration whose ctx answers the page's three routes through `answer(path, body)` (a promise, a value or an Error). */
 function pageCtx(answer) {
   const c = { calls: [], pages: [], disposers: [] }
@@ -1055,25 +1117,29 @@ check($$(pg.el, '.asterisk-switch').every(b => b.getAttribute('role') === 'switc
   && same(locked.map(b => b.closest('[data-asterisk="kind-row"]').getAttribute('data-kind')), ['irreversible', 'security'])
   && locked.every(b => b.getAttribute('aria-checked') === 'true') && switchOf('cost').getAttribute('aria-checked') === 'false'
   && switchOf('tradeoff').getAttribute('aria-checked') === 'true'
-  && $$(pg.el, '[data-asterisk="locked"]').length === 2 && text($(pg.el, '[data-asterisk="locked"]')) === 'Always on: a missed irreversible step or security risk costs the most.',
-  `25. the two locked switches are disabled and checked with their reason; cost off, tradeoff on (${locked.length} disabled)`)
+  && $$(pg.el, '[data-asterisk="locked"]').length === 1 && text($(pg.el, '[data-asterisk="locked"]')) === 'Always on: a missed irreversible step or security risk costs the most.'
+  && $(pg.el, '[data-asterisk="locked"]').previousElementSibling?.textContent === 'Priority 1'
+  && locked.every(b => b.getAttribute('aria-describedby') === $(pg.el, '[data-asterisk="locked"]').id && b.getAttribute('data-locked') === 'true'),
+  `25/26. the two locked switches are disabled and checked; their reason is said once, under Priority 1, and describes both; cost off, tradeoff on (${locked.length} disabled)`)
 const radios = () => $$(pg.el, '[role="radiogroup"] [role="radio"]')
 check(radios().length === 3 && same(radios().map(r => text($(r, '.asterisk-tone-label'))), ['Plain', 'Friendly', 'Playful'])
   && same(radios().map(r => r.getAttribute('aria-checked')), ['true', 'false', 'false']) && radios().every(r => r.classList.contains('asterisk-tone')),
   `25. three tone radios Plain, Friendly, Playful; the saved one is checked (${radios().map(r => r.getAttribute('aria-checked'))})`)
 const tables = ['by-kind', 'by-model', 'by-tone'].map(n => $(pg.el, `table[data-asterisk="${n}"]`))
-check(tables.every(Boolean) && same($$(tables[1], 'th').map(text), COLS_MODEL) && $$(tables[0], 'tbody tr').length === 11
+check(tables.every(Boolean) && same($$(tables[1], 'th').map(text), COLS_MODEL) && same($$(tables[0], 'th').map(text), COLS_KIND) && $$(tables[0], 'tbody tr').length === 11
+  && $$(tables[1], 'tbody td:first-child').every(td => td.className === 'asterisk-key-model' && td.getAttribute('title') === text(td))
   && text($$(tables[0], 'tbody tr')[10].children[0]) === 'Older kinds' && same($$(tables[2], 'tbody tr').map(r => text(r.children[0])), ['Plain', 'Friendly', 'Playful'])
   && text($$(tables[1], 'tbody tr')[1].children[0]) === 'Unknown model' && text($$(tables[1], 'tbody tr')[1].children[3]) === '–',
-  `25. the three tables render: kind (with Older kinds), model (with its money columns) and tone (${tables.map(Boolean)})`)
+  `25/26. the three tables render: kind with the common outcomes and only the rare ones some row has (Unrecorded here), model and tone with money and rated columns, model ids titled (${$$(tables[0], 'th').map(text)} | ${$$(tables[1], 'th').map(text)})`)
 const sug = () => $$(pg.el, '[data-asterisk="suggestion"]')
 check(sug().length === 1 && sug()[0].getAttribute('data-kind') === 'result' && text($(sug()[0], '.asterisk-suggest-text')) === SUGGEST
+  && sug()[0].parentElement === $(pg.el, '[data-asterisk="kind-row"][data-kind="result"]') && !$(pg.el, 'section[data-asterisk="report"] [data-asterisk="suggestion"]')
   && same($$(sug()[0], 'button').map(text), ['Turn off', 'Keep']) && $$(sug()[0], 'button').every(b => b.className === 'asterisk-suggest-btn'),
-  `25. the suggestion names the kind with its counts and offers Turn off and Keep (${text(sug()[0])})`)
+  `25/26. the suggestion sits in its kind's row, names the kind with its counts and offers Turn off and Keep (${text(sug()[0])})`)
 const sinceDate = new Date(SINCE * 1000).toISOString().slice(0, 10)
 check(text($(pg.el, '[data-asterisk="summary"]')) === `12 checks · 5 notes · $0.10 spent · $0.05 per asked note · 3 skipped · since ${sinceDate}`
-  && text($(pg.el, '[data-asterisk="legend"]')).includes('Dropped: left when more than 50 notes were waiting.'),
-  `25. the summary line and the legend (${text($(pg.el, '[data-asterisk="summary"]'))})`)
+  && same($$(pg.el, '[data-asterisk="legend"] li').map(text), ['Unrecorded: from a version that did not record how a note left.']),
+  `25/26. the summary line, and a legend only for the rare columns shown (${text($(pg.el, '[data-asterisk="summary"]'))} | ${$$(pg.el, '[data-asterisk="legend"] li').map(text)})`)
 const before25 = pc.calls.length
 await click(switchOf('security'))
 check(pc.calls.length === before25, '25. a locked switch click sends nothing')
@@ -1082,15 +1148,31 @@ pageAnswer = (p, body) => new Promise(r => { releaseSave = () => r(echo(p, body)
 await click(switchOf('tradeoff'))
 const controls = () => [...$$(pg.el, '.asterisk-switch'), ...radios(), ...$$(pg.el, '.asterisk-suggest-btn')]
 check(same(pc.calls.at(-1), ['/settings', { method: 'POST', body: { tone: 'plain', enabled: REPORT.settings.enabled.filter(k => k !== 'tradeoff') } }])
-  && controls().every(b => b.disabled),
-  `25. a switch click sends /settings with the full list minus that kind; while it is pending every control is disabled (${JSON.stringify(pc.calls.at(-1))})`)
+  && controls().every(b => b.getAttribute('aria-disabled') === 'true' || b.getAttribute('data-locked') === 'true') && controls().filter(b => b.disabled).length === 2
+  && text($(pg.el, '[data-asterisk="saving"]')) === 'Saving…' && $(pg.el, '[data-asterisk="saving"]').getAttribute('role') === 'status',
+  `25/26. a switch click sends /settings with the full list minus that kind; while it is pending every control is aria-disabled (still focusable) and "Saving…" shows (${JSON.stringify(pc.calls.at(-1))})`)
+const pendingCalls = pc.calls.length
+await clickHeld(radios()[2])
+check(pc.calls.length === pendingCalls, '26. a click while a save is pending sends nothing')
 await act(async () => { releaseSave(); await settle(); await settle() })
 pageAnswer = echo
-check(switchOf('tradeoff').getAttribute('aria-checked') === 'false' && !switchOf('tradeoff').disabled, '25. the answer redraws the page: tradeoff off, controls enabled again')
+check(switchOf('tradeoff').getAttribute('aria-checked') === 'false' && !switchOf('tradeoff').disabled && !switchOf('tradeoff').hasAttribute('aria-disabled')
+  && text($(pg.el, '[data-asterisk="saving"]')) === '', '25. the answer redraws the page: tradeoff off, controls enabled again, no "Saving…"')
 await click(radios()[1])
 check(same(pc.calls.at(-1), ['/settings', { method: 'POST', body: { tone: 'friendly', enabled: REPORT.settings.enabled.filter(k => k !== 'tradeoff') } }])
   && radios()[1].getAttribute('aria-checked') === 'true',
   `25. a tone click sends /settings with that tone and the current kinds (${JSON.stringify(pc.calls.at(-1))})`)
+check(same(radios().map(r => r.tabIndex), [-1, 0, -1]) && same(radios().map(r => Boolean($(r, '.asterisk-tone-check'))), [false, true, false])
+  && $(radios()[1], '.asterisk-tone-check')?.getAttribute('aria-hidden') === 'true',
+  `26. only the checked tone is in the tab order and carries the hidden check mark (${radios().map(r => r.tabIndex)})`)
+await act(async () => { radios()[1].dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })); await settle(); await settle() })
+check(pc.calls.at(-1)?.[1]?.body?.tone === 'playful' && radios()[2].getAttribute('aria-checked') === 'true' && document.activeElement === radios()[2],
+  `26. ArrowDown in the tone group selects and focuses the next tone (${pc.calls.at(-1)?.[1]?.body?.tone})`)
+await act(async () => { radios()[2].dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); await settle(); await settle() })
+check(pc.calls.at(-1)?.[1]?.body?.tone === 'plain' && document.activeElement === radios()[0], '26. ArrowRight on the last tone wraps to the first')
+await act(async () => { radios()[0].dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })); await settle(); await settle() })
+check(pc.calls.at(-1)?.[1]?.body?.tone === 'playful', '26. ArrowUp on the first tone wraps to the last')
+await click(radios()[1])
 await click($(sug()[0], '[data-asterisk="turn-off"]'))
 check(same(pc.calls.at(-1)?.[1]?.body?.enabled, REPORT.settings.enabled.filter(k => k !== 'tradeoff' && k !== 'result')) && pc.calls.at(-1)[1].body.tone === 'friendly',
   `25. Turn off sends /settings without the kind, the tone unchanged (${JSON.stringify(pc.calls.at(-1))})`)
@@ -1108,6 +1190,7 @@ check(addedS.length === 1 && addedS[0].id === 'asterisk-settings-error' && added
 pageAnswer = echo
 const vars25 = [...(text($(pg.el, 'style')).matchAll(/var\(\s*(--[\w-]+)/g))].map(x => x[1])
 const css25 = text($(pg.el, 'style'))
+SETTINGS_TEXT = css25
 const rules25 = [...css25.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(x => ({ sel: x[1].trim(), body: x[2] }))
 const moving25 = rules25.filter(r => /(^|;)\s*(transition|animation)\s*:/.test(r.body))
 check(vars25.length > 10 && vars25.every(v => v.startsWith('--ui-') || v.startsWith('--font-'))
@@ -1148,8 +1231,61 @@ act(() => pe.root.unmount())
 pc.disposers.forEach(fn => fn())
 check(reactWarnings.length === 0, `25. React logged no warning on the settings page (${reactWarnings.slice(0, 2).join(' | ')})`)
 
+// 26. the 4.6.0 interface pass: undo, kind and severity, keys, sizes
+await focus('rt-1', 'st-1')
+const live26 = text(live())
+reply = { points: [point('Undo first', 'The assistant kept the cache without saying it is stale.')], cost_usd: 0.01, cost_status: 'estimated', model: 'fake-model-x', at: 8100.5, title: null }
+await emit('rt-1', frame('undo one', 810))
+reply = { points: [point('Undo second', 'The assistant dropped the index without saying queries slow down.', 'assistant', 'security')], cost_usd: 0.01, cost_status: 'estimated', model: 'fake-model-x', at: 8200.5, title: null }
+await emit('rt-1', frame('undo two', 820))
+const heads26 = () => $$(strip.el, '[data-asterisk="entry"]').map(e => text($(e, '[data-asterisk="headline"]')))
+check(same(heads26(), ['Undo first', 'Undo second']) && text(live()) === 'Worth knowing: Undo second' && live26 !== text(live()),
+  `26. each live note replaces the hidden live line's text with its own headline (${text(live())})`)
+let posts26 = rest.length
+await clickHeld(button($$(strip.el, '[data-asterisk="entry"]')[0], 'Not useful'))
+let undoRow = $(strip.el, '[data-asterisk="undo"]')
+check(rest.length === posts26 && same(heads26(), ['Undo second']) && text($(undoRow, 'span')) === 'Recorded: Not useful.' && same($$(undoRow, 'button').map(text), ['Undo']) && held.size === 1,
+  `26. a rating click removes the note at once, posts nothing yet and offers "Recorded: Not useful." with Undo (${rest.length - posts26} posts, ${text(undoRow)})`)
+await clickHeld(button(undoRow, 'Undo'))
+check(rest.length === posts26 && same(heads26(), ['Undo first', 'Undo second']) && !$(strip.el, '[data-asterisk="undo"]') && held.size === 0 && dots()['st-1'] === 1,
+  `26. Undo puts the note back in its place, posts nothing and clears the window (${heads26()})`)
+await elapse()
+check(rest.length === posts26, '26. after Undo the closed window posts nothing')
+await clickHeld(button($$(strip.el, '[data-asterisk="entry"]')[0], 'Already knew'))
+await clickHeld(button($$(strip.el, '[data-asterisk="entry"]')[0], 'Got it'))
+check(rest.length === posts26 + 1 && same(rest.at(-1), ['/dismiss', { method: 'POST', body: { check_at: 8100.5, signal: 'already_knew' } }])
+  && text($(strip.el, '[data-asterisk="undo"] span')) === 'Recorded: Got it.' && held.size === 1 && !$(strip.el, '[data-asterisk="entry"]') && dots()['st-1'] === 0,
+  `26. a second click closes the first window at once (its signal posted) and opens its own; the last note gone, only the undo row stays (${JSON.stringify(rest.at(-1))})`)
+await elapse()
+check(rest.length === posts26 + 2 && same(rest.at(-1), ['/dismiss', { method: 'POST', body: { check_at: 8200.5, signal: 'read' } }]) && stripGone(),
+  `26. the window closing posts the held signal, and the strip is gone (${JSON.stringify(rest.at(-1))})`)
+reply = { points: [point('Escape folds', 'The assistant skipped the migration without saying so.', 'assistant', 'irreversible')], cost_usd: 0.01, cost_status: 'estimated', model: 'fake-model-x', at: 8300.5, title: null }
+await emit('rt-1', frame('escape', 830))
+posts26 = rest.length
+s = $(strip.el, '[data-asterisk="strip"]')
+check(text($(s, '[data-asterisk="label"]')) === 'Worth knowing · Irreversible step' && $(s, '[data-asterisk="label"] [data-asterisk="kind"]')?.getAttribute('data-severity') === 'high'
+  && $(s, '[data-asterisk="entry"]')?.getAttribute('data-severity') === 'high',
+  `26. an irreversible note: the label names the kind and marks it high (${text($(s, '[data-asterisk="label"]'))})`)
+await act(async () => { button(s, 'Got it').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await settle() })
+s = $(strip.el, '[data-asterisk="strip"]')
+check(s?.getAttribute('data-folded') === 'true' && rest.length === posts26, `26. Escape inside the strip folds it and records nothing (${s?.getAttribute('data-folded')}, ${rest.length - posts26})`)
+await click($(s, '[data-asterisk="fold"]'))
+await clickHeld(button(strip.el, 'Got it'))
+const postsDispose = rest.length
+const css26 = text($(strip.el, 'style'))
+const sizes = css => [...css.matchAll(/font-size:\s*([\d.]+)px/g)].map(x => +x[1])
+const rule = (css, sel) => css.match(new RegExp(`(^|\\n|\\})${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`))?.[2] || ''
+check(sizes(css26).length > 8 && sizes(css26).every(n => n >= 12) && sizes(SETTINGS_TEXT).every(n => n >= 12)
+  && /min-height:24px/.test(rule(css26, '.asterisk-btn')) && /min-width:24px/.test(rule(css26, '.asterisk-fold')) && /min-height:24px/.test(rule(css26, '.asterisk-fold'))
+  && /stroke:var\(--ui-red\)/.test(rule(css26, '.asterisk-entry[data-severity="high"] .asterisk-stroke path'))
+  && /animation:none/.test(rule(css26, '[data-motion="full"] .asterisk-entry[data-severity="high"] .asterisk-stroke path'))
+  && /\[data-motion="full"\] \.asterisk-entry\[data-expanded="true"\] \.asterisk-stroke path\{[^}]*animation:asterisk-draw/.test(css26)
+  && !/border-left:\s*[2-9]/.test(css26 + SETTINGS_TEXT),
+  `26. CSS: no text under 12px, 24px targets, a high note's stroke in --ui-red drawn without animation, only an expanded note's stroke draws, no thick side border (${Math.min(...sizes(css26))}px)`)
 // 1. dispose
 disposers.forEach(fn => fn())
+check(rest.length === postsDispose + 1 && same(rest.at(-1)?.[1]?.body, { check_at: 8300.5, signal: 'read' }) && held.size === 0,
+  `26. dispose closes an open undo window and posts its signal (${JSON.stringify(rest.at(-1))})`)
 check(stub.host.state.focusedSessionId.subs.size === 0 && stub.host.state.focusedStoredSessionId.subs.size === 0, 'dispose retires the focus listeners')
 act(() => { strip.root.unmount(); ROWS.forEach(id => rows[id].root.unmount()) })
 console.error = consoleError

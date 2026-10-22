@@ -46,8 +46,12 @@ separate from the ledger, which holds no text, and it is left there on uninstall
 
 ## Dismissing a note
 
-A note stays until you dismiss it with one of its buttons, in one click. Each one removes the note
-and records in the ledger, without any text, how it left:
+The note's label names its kind ("Worth knowing · Irreversible step"); an irreversible step or a
+security risk is marked in the theme's red. A note stays until you dismiss it with one of its
+buttons, in one click. Each one removes the note and records in the ledger, without any text, how
+it left. For five seconds after the click, "Recorded: <button>." offers **Undo**, which puts the
+note back; the record is sent when those seconds end (Ask in chat sends it at once). Quit the app
+within them and the note is back on the next start, unrated.
 
 | Button | Signal | Means |
 |---|---|---|
@@ -58,7 +62,8 @@ and records in the ledger, without any text, how it left:
 | Not useful | `not_useful` | not worth showing (wrong, beside the point or trivial) |
 
 "Ask in chat" is on a note of the chat you are in; a note of another chat has "Open" instead, which
-opens that chat and keeps the note.
+opens that chat and keeps the note. The three ratings sit together after "Got it". Escape inside the
+strip folds it to one line with the newest headline.
 
 ## Settings
 
@@ -73,12 +78,13 @@ Settings → Plugins → Asterisk. Changes are saved for the active profile and 
   which note you get.
 - **How useful it is:** checks, notes, spend and cost per asked note, then tables by kind, by model
   and by tone of how each note left: Shown, Filtered (written for a kind you switched off, not shown),
-  Asked, Read, Already knew, Not sure, Not useful, Open, Dropped (more than 50 notes were waiting),
-  Chat deleted and Unrecorded (from a version that did not record it). Computed from the ledger,
-  which holds no text.
+  Asked, Got it, Already knew, Not sure, Not useful, Open, Dropped (more than 50 notes were
+  waiting), Chat deleted and Unrecorded (from a version that did not record it). The rare columns
+  (Filtered, Dropped, Chat deleted, Unrecorded) appear only when a kind has one; the model and tone
+  tables show the money columns and the ratings. Computed from the ledger, which holds no text.
 - **Suggestions:** when the last rated notes of a kind under the current model and tone are mostly
   Not useful or Already knew (at least 10, and a 95% lower bound above one half), the page asks
-  "Turn off <kind>?" with **Turn off** and **Keep**. Nothing changes without your click; Keep hides
+  "Turn off <kind>?", in that kind's row, with **Turn off** and **Keep**. Nothing changes without your click; Keep hides
   the question until 10 more rated notes of that kind. The rule is in `Docs/asterisk-notes.md`.
 
 ## Layout
