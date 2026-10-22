@@ -1,5 +1,30 @@
 # Changelog
 
+## 4.6.0 (2026-10-22)
+
+An interface pass after an Impeccable critique and audit (24/40 and 13/20 before it).
+
+- The note's label names its kind ("Worth knowing · Irreversible step"); with several notes the
+  kind leads each note's line. An irreversible or security note is marked in the theme's red, and
+  its stroke is shown drawn rather than animated.
+- Buttons: "Ask in chat" (or "Open") is the primary action, then "Got it", then a quieter "Rate"
+  group: Already knew, Not sure, Not useful. Every signal is kept.
+- Undo: after a click, "Recorded: <button>." offers Undo for five seconds; `/dismiss` is posted when
+  they end (Ask in chat posts at once, a second click closes the first window, and the plugin's dispose
+  posts an open one). If the app quits before the record goes out, the note is still pending in the
+  backend and comes back on the next start, unrated.
+- Folded, the strip shows the focused (or newest) note's headline. One-line notes are smaller and
+  have no stroke; only the expanded note's stroke draws.
+- Accessibility: the strip is no longer one big live region; a hidden line announces each new note.
+  The headline is an `h3` that names every button of its note; targets are at least 24px; Escape
+  folds the strip; the tone picker moves with the arrow keys and shows a check mark; a pending save
+  keeps focus and says "Saving…". No text is under 12px, and secondary text uses the theme's
+  secondary colour instead of its tertiary one.
+- Settings: the always-on reason is said once; locked switches are no longer dimmed; a "Turn off
+  <kind>?" suggestion sits in that kind's row; the rare outcome columns appear only when a kind has
+  one; model and tone tables show money and ratings; long model ids are shortened with a title.
+  The "Read" column is now "Got it", like its button.
+
 ## 4.5.1 (2026-10-21)
 
 - Pending notes on disk are a lasting feature, no longer "for the development phase": the text of

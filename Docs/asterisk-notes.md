@@ -98,12 +98,17 @@ Hermes' own extension points.
    title (read-only, `get_session_title`; null when it cannot be read, never an error) and returns it
    with the check's `at`.
 7. One point becomes one note in the "Worth knowing" strip at the top of the composer
-   (`composer.top`). A single note shows its headline (serif, underlined by a stroke in the theme's
-   accent), its sentence, the cost and who decided, and "Already knew" / "Not sure" / "Not useful" /
-   "Ask in chat" / "Got it" for the focused chat's note, or "Already knew" / "Not sure" / "Not useful"
-   / "Open" / "Got it" when it belongs to another chat. Several notes are a numbered list in arrival order: the focused chat's note is expanded,
-   every other one is one line with its chat's title ("Untitled chat" without one), the cost and
-   "Open", which opens that chat and keeps the note.
+   (`composer.top`). A single note's label names its kind ("Worth knowing · Unstated tradeoff"); it
+   shows its headline (an `h3` in a serif, underlined by a stroke in the theme's accent), its
+   sentence, the cost and who decided, and "Ask in chat" (primary) / "Got it" / a "Rate" group of
+   "Already knew" / "Not sure" / "Not useful" for the focused chat's note, or "Open" in place of
+   "Ask in chat" when it belongs to another chat. Several notes are a numbered list in arrival order:
+   the focused chat's note is expanded (its meta led by its kind), every other one is one smaller
+   line, without the stroke, with its kind, its chat's title ("Untitled chat" without one), the cost
+   and "Open", which opens that chat and keeps the note. An irreversible or security note is marked
+   `data-severity="high"`: its kind and stroke in `--ui-red`, the stroke shown drawn. The strip is a
+   labelled region but not itself live; a visually hidden polite line, mounted even with no note,
+   says "Worth knowing: <headline>" for each new live note (a restored one is not announced).
    "Ask in chat" (focused chat's note only) puts the note into that chat's input through
    `host.composer.insertText`, addressed by the note's own chat id (never "whichever composer has
    focus"), in block mode: after the user's draft, separated by a blank line, so the draft is kept.
@@ -113,11 +118,18 @@ Hermes' own extension points.
    the main model starts until the user presses send. When the insert succeeds the note leaves the
    strip; when it fails (that chat's input is not on screen) the note stays and one warning says to
    click into the input and try again. A second click while an insert is pending does nothing.
-   A chevron in the strip's header folds it to one line ("Worth knowing · 3 notes", the label
-   underlined by the accent stroke); the notes and the sidebar dots stay, and a new note unfolds it.
-   The fold is not stored. A note stays until "Ask in chat", "Got it", "Already knew", "Not sure" or
-   "Not useful" removes it, in one click; each removal posts `POST /dismiss {check_at, signal}` with
-   the signal `asked`, `read`, `already_knew`, `unsure` or `not_useful`. The sidebar row of a chat with a pending note carries a dot in the accent
+   A chevron in the strip's header, or Escape inside the strip, folds it to one line ("Worth knowing
+   · 3 notes" and the focused or newest note's headline); the notes and the sidebar dots stay, and a
+   new note unfolds it. The fold is not stored. A note stays until "Ask in chat", "Got it", "Already
+   knew", "Not sure" or "Not useful" removes it, in one click; each removal posts `POST /dismiss
+   {check_at, signal}` with the signal `asked`, `read`, `already_knew`, `unsure` or `not_useful`.
+   **Undo (4.6.0).** "Ask in chat" posts at once (its text is already in the input). The other four
+   remove the note at once and hold the post for 5 s (`UNDO_MS`) behind "Recorded: <button>." and
+   Undo, which puts the note back in its place and posts nothing. A second click posts the held one
+   first; the plugin's dispose posts an open one. If the app quits inside the window nothing was
+   posted, so the backend still holds the note and restores it on the next start: a rating is lost,
+   never a note. The Impeccable critique of 4.5.1 scored error prevention 2/4 for one-click,
+   undo-less rating buttons that feed the "Turn off" suggestion. The sidebar row of a chat with a pending note carries a dot in the accent
    (`sessionRow.trailing`). Pending notes survive an app restart (see
    "Notes on disk"). Colours come from the app's theme tokens
    only, so the strip follows the theme in light and dark; under reduced motion the stroke is shown
@@ -319,7 +331,10 @@ covered: spelled numbers in other languages, and outcomes such as "breaks" (the 
 - Tables: by kind (in `PRIORITY` order, then `other` when any), by model (the route that answered)
   and by tone (in `TONES` order), each with the outcomes `shown, filtered, asked, read, already_knew,
   unsure, not_useful, open, evicted, chat_gone, unrecorded`; model and tone rows add checks, spend and
-  cost per asked note.
+  cost per asked note. The page (4.6.0) shows `filtered`, `evicted`, `chat_gone` and `unrecorded`
+  only when some kind row has one (with their legend line), and the model and tone tables only the
+  money columns and `shown, asked, read, already_knew, unsure, not_useful`; the API answer is
+  unchanged. A "Turn off" suggestion is drawn in its kind's row.
 
 **Suggestions — suggest only, never automatic.** For each kind that is on and not locked, take its
 rated notes (outcome `asked`, `already_knew` or `not_useful`; `read` and `unsure` count neither way)

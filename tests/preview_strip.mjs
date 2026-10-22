@@ -166,17 +166,18 @@ const ctx = {
 mod.default.register(ctx)
 // The watcher is private to register(); a fresh one per state gives each section its own notes.
 const NOTES = [
-  { id: 'n1', storedId: 'st-1', title: 'Deploy plan', headline: 'SQLite chosen over Postgres',
+  { id: 'n1', kind: 'tradeoff', storedId: 'st-1', title: 'Deploy plan', headline: 'SQLite chosen over Postgres',
     text: 'The assistant chose SQLite over Postgres without saying it drops concurrent writes.', by: 'assistant', cost: '~$0.04', checkAt: 1 },
-  { id: 'n2', storedId: 'st-2', title: null, headline: 'Old backups deleted for good',
+  { id: 'n2', kind: 'irreversible', storedId: 'st-2', title: null, headline: 'Old backups deleted for good',
     text: 'You asked to delete the old backups; the reply calls it a cleanup, but they cannot be restored.', by: 'user', cost: '<$0.01', checkAt: 2 },
-  { id: 'n3', storedId: 'st-3', title: 'Release notes for the spring update', headline: 'Release tag pushed before the tests finished',
+  { id: 'n3', kind: 'overreach', storedId: 'st-3', title: 'Release notes for the spring update', headline: 'Release tag pushed before the tests finished',
     text: 'The assistant pushed the release tag while the test run was still going; its log is in build/release_candidate_2026_10_18_spring_update_full_test_run_output.log.', by: 'assistant', cost: '~$0.06', checkAt: 3 }
 ]
-const watcherWith = (list, { folded = false } = {}) => {
+const watcherWith = (list, { folded = false, undo = null } = {}) => {
   const w = mod.createWatcher(ctx, stub.host)
   w.notes.set(list)
   w.folded.set(folded)
+  if (undo) w.undo.set(undo)
   return w
 }
 const strip = (list, opts) => renderToStaticMarkup(createElement(mod.createStrip(watcherWith(list, opts))))
@@ -321,10 +322,12 @@ body{margin:0;padding:24px;background:var(--ui-bg, var(--theme-background-seed))
 <main>
 ${section('One note, focused chat (Ask in chat)', strip([NOTES[0]]))}
 ${section('One note, another chat', strip([NOTES[2]]))}
+${section('One note, irreversible step', strip([NOTES[1]]))}
 ${section('Three notes, one in the focused chat', strip(NOTES))}
 ${section('Three notes, collapsed', strip(NOTES, { folded: true }))}
 ${section('One note, collapsed', strip([NOTES[0]], { folded: true }))}
 ${section('Three notes, reduced motion', reduced(NOTES))}
+${section('Two notes, one just rated (Undo)', strip([NOTES[0], NOTES[2]], { undo: { note: NOTES[1], signal: 'not_useful', label: 'Not useful', index: 1 } }))}
 ${section('One note, another chat, narrow (260px)', strip([NOTES[2]]), true)}
 ${section('Three notes, one in the focused chat, narrow (260px)', strip(NOTES), true)}
 </main></div><script>${FIT}</script></body></html>
