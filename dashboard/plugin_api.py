@@ -729,7 +729,7 @@ def notes() -> dict:
                 log.warning("asterisk: notes not written (%s)", type(exc).__name__)
                 dropped = []
     _record_gone(dropped, "chat_gone")
-    return {"notes": entries}
+    return {"notes": entries, "gone": sorted(gone)}
 
 
 def _default_settings() -> dict:

@@ -1,6 +1,6 @@
 name: asterisk
 label: Asterisk
-version: 4.6.0
+version: 4.6.1
 requires_hermes: ">=0.21.6"
 description: >-
   Asterisk — after a turn in a chat you opened where the assistant used a tool that can change

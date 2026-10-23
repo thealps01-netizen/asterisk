@@ -116,12 +116,13 @@ Locks:
      (a) restart survival: a check with a point writes plugin-data/asterisk/notes.json holding exactly
          one entry {session_id, at, title, model, cost_usd, cost_status, points, tone} with the full headline
          and text; plugin_api.py loaded a second time under another module name (same HERMES_HOME)
-         answers /notes with that entry unchanged; a check with no point and a skip write no entry;
+         answers /notes with that entry unchanged and gone []; a check with no point and a skip write no entry;
      (b) /dismiss {check_at, signal} for asked, read, already_knew, unsure and not_useful appends
          {at, feedback: <signal>, check_at} and removes the entry from the file and from /notes; a bad
          check_at (8 cases) or signal ("knew", "", None, 1, missing) is a 400 with its message, no line,
          nothing removed; the router mounts POST /dismiss and POST /notes and no /feedback;
-     (c) an entry whose chat the store does not resolve is left out and removed from the file; invalid
+     (c) an entry whose chat the store does not resolve is left out and removed from the file, and its
+         chat id is in the answer's sorted gone list (4.6.1, the desktop prunes on sessions.changed); invalid
          entries are left out; a store that cannot open or a lookup that raises answers every entry and
          the file keeps its bytes;
      (d) 51 checks with a point leave the 50 newest entries, oldest first;
@@ -1184,7 +1185,7 @@ restart_spec = importlib.util.spec_from_file_location("asterisk_api_restart", AP
 api2 = importlib.util.module_from_spec(restart_spec)
 restart_spec.loader.exec_module(api2)
 restored = api2.notes_route({})
-check(api2 is not api and restored == {"notes": [entry]} and restored["notes"][0]["session_id"] == "st-1",
+check(api2 is not api and restored == {"notes": [entry], "gone": []} and restored["notes"][0]["session_id"] == "st-1",
       f"22a. a second load of plugin_api.py (a fresh process stand-in, same HERMES_HOME) answers /notes with that entry unchanged ({restored})")
 before = notes_path(h5).read_bytes()
 Fake.answer = '{"points": []}'
@@ -1235,20 +1236,20 @@ notes_path(h6).parent.mkdir(parents=True, exist_ok=True)
 notes_path(h6).write_text(json.dumps([kept_entry, gone_entry]), encoding="utf-8")
 opened = len(Store.opened)
 out = api.notes_route({})
-check(out == {"notes": [kept_entry]} and stored(h6) == [kept_entry] and len(Store.opened) == opened + 1
+check(out == {"notes": [kept_entry], "gone": ["st-deleted"]} and stored(h6) == [kept_entry] and len(Store.opened) == opened + 1
       and Store.opened[-1] == {"db_path": None, "read_only": True},
-      f"22c. an entry whose chat the store does not resolve is left out and removed from the file; the store opened read-only once ({out})")
+      f"22c. an entry whose chat the store does not resolve is left out, removed from the file and its chat named in gone; the store opened read-only once ({out})")
 notes_path(h6).write_text(json.dumps([kept_entry] + invalid), encoding="utf-8")
 before = notes_path(h6).read_bytes()
 out = api.notes_route({})
-check(out == {"notes": [kept_entry]} and notes_path(h6).read_bytes() == before,
+check(out == {"notes": [kept_entry], "gone": []} and notes_path(h6).read_bytes() == before,
       f"22c. an entry without a positive-number at or a non-empty session_id is left out; nothing gone, the file is not rewritten ({out})")
 notes_path(h6).write_text(json.dumps([kept_entry, gone_entry]), encoding="utf-8")
 before = notes_path(h6).read_bytes()
 Store.raise_on_open = True
 out = api.notes_route({})
 Store.raise_on_open = False
-check(out == {"notes": [kept_entry, gone_entry]} and notes_path(h6).read_bytes() == before,
+check(out == {"notes": [kept_entry, gone_entry], "gone": []} and notes_path(h6).read_bytes() == before,
       f"22c. the store failing to open: every entry is answered and the file keeps its bytes ({out})")
 real_resolve = SessionDB.resolve_session_id
 
@@ -1260,7 +1261,7 @@ def raising_resolve(self, session_id_or_prefix):
 SessionDB.resolve_session_id = raising_resolve
 out = api.notes_route({})
 SessionDB.resolve_session_id = real_resolve
-check(out == {"notes": [kept_entry, gone_entry]} and notes_path(h6).read_bytes() == before,
+check(out == {"notes": [kept_entry, gone_entry], "gone": []} and notes_path(h6).read_bytes() == before,
       f"22c. a lookup that raises: every entry is answered and the file keeps its bytes ({out})")
 
 # 22d. cap: the 50 newest, oldest first
@@ -1305,7 +1306,7 @@ for label, body in (("an unparseable", "{not json"), ("a non-list", '{"notes": [
     notes_path(h8).parent.mkdir(parents=True, exist_ok=True)
     notes_path(h8).write_text(body, encoding="utf-8")
     out = api.notes_route({})
-    check(out == {"notes": []}, f"22e. {label} notes file -> /notes answers [] ({out})")
+    check(out == {"notes": [], "gone": []}, f"22e. {label} notes file -> /notes answers [] ({out})")
 api.check("st-1", RECEIPT, 6001.0)
 check([e["at"] for e in stored(h8)] == [6001.0], "22e. the next write replaces a file that is not a list")
 notes_path(h8).unlink()
@@ -1478,7 +1479,7 @@ notes_path(h10).write_text(json.dumps(entries[:48] + [{**e, "session_id": "st-de
 count = len(ledger_at(h10))
 out = api.notes_route({})
 new = ledger_at(h10)[count:]
-check(len(out["notes"]) == 48 and len(new) == 2 and all(set(x) == {"at", "gone", "check_at"} and x["gone"] == "chat_gone" for x in new)
+check(len(out["notes"]) == 48 and out["gone"] == ["st-deleted"] and len(new) == 2 and all(set(x) == {"at", "gone", "check_at"} and x["gone"] == "chat_gone" for x in new)
       and [x["check_at"] for x in new] == [entries[48]["at"], entries[49]["at"]],
       f"25f. /notes with a deleted chat writes one chat_gone line per dropped note, nothing for a malformed entry ({new})")
 count = len(ledger_at(h10))

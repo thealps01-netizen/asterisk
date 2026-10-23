@@ -122,6 +122,11 @@
  *          and a click meanwhile sends nothing.
  *      (g) CSS: no font size under 12px in the strip or the page, 24px targets, a high note's
  *          stroke in --ui-red without animation, no side border thicker than 1px.
+ *  27. A chat deleted while the app runs (4.6.1): sessions.changed posts /notes {} only while a
+ *      note or an undo window is pending, one request at a time with one trailing request for
+ *      changes meanwhile; the notes (and a held rating) of each chat in the answer's gone list
+ *      leave the strip unposted and their dots go; a failed /notes keeps the notes, no toast; each
+ *      new note also asks once, so a chat deleted while its check ran loses the note at once.
  *  REST counts in locks 1-12 count /check and /dismiss calls only (/status and /notes have their own
  *  lists). The stub's host.composer.insertText records its calls and resolves a settable result, or
  *  rejects, or waits (deferred) until the lock resolves it.
@@ -274,7 +279,9 @@ const ctx = {
     }
     if (p === '/notes') {
       notesCalls.push(opts)
-      return notesAnswer
+      const a = typeof notesAnswer === 'function' ? await notesAnswer() : notesAnswer
+      if (a instanceof Error) throw a
+      return a
     }
     rest.push([p, opts])
     if (restFails) throw new Error(restFails)
@@ -329,7 +336,7 @@ const dotC = registered.find(c => c.area === 'sessionRow.trailing')
 check(typeof stripC?.render === 'function' && typeof dotC?.data?.render === 'function' && !registered.some(c => /pane|settings|nav/i.test(String(c.area))),
   'composer.top has a render, sessionRow.trailing a data.render; no pane, page or nav row')
 check(ctx.bundle?.en?.asterisk?.title === 'Asterisk' && ctx.bundle?.en?.asterisk?.label === 'Worth knowing', 'the English bundle is registered')
-check(listeners.get('message.complete')?.size === 1 && listeners.size === 1, 'one listener, on message.complete only')
+check(listeners.get('message.complete')?.size === 1 && listeners.get('sessions.changed')?.size === 1 && listeners.size === 2, 'one listener on message.complete and one on sessions.changed, nothing else')
 check(stub.host.state.focusedSessionId.subs.size === 1 && stub.host.state.focusedStoredSessionId.subs.size === 1, 'focus is followed')
 check(statusCalls.length === 1 && same(statusCalls[0], { method: 'POST', body: { desktop_ready: true } }) && stub.calls.notify.length === 0,
   `13a. registration posts /status { desktop_ready: true } once; ready, no old install -> no notice (${JSON.stringify(statusCalls)})`)
@@ -814,13 +821,18 @@ check(reactWarnings.length === 0, `React logged no warning (${reactWarnings.slic
 // /notes answers `notes` (an Error throws; a function is called and its promise awaited) and is
 // counted apart from /check and /dismiss.
 function fakeCtx(answer, { notes = { notes: [] }, pet = null } = {}) {
-  const c = { registered: [], listeners: new Set(), disposers: [], status: [], checks: [], notes: [], pages: [], i18n: 0,
+  const c = { registered: [], listeners: new Set(), events: new Map(), disposers: [], status: [], checks: [], notes: [], pages: [], i18n: 0,
     checkAnswer: { points: [], cost_usd: 0.01, cost_status: 'estimated', at: 9, title: null } }
   c.ctx = {
     register: x => { c.registered.push(x); return () => {} },
     i18n: { register: () => { c.i18n++ }, t: key => key },
     registerSettingsPage: p => { c.pages.push(p); return () => {} },
-    onEvent: (type, fn) => { c.listeners.add(fn); return () => c.listeners.delete(fn) },
+    onEvent: (type, fn) => {
+      if (!c.events.has(type)) c.events.set(type, new Set())
+      c.events.get(type).add(fn)
+      if (type === 'message.complete') c.listeners.add(fn)
+      return () => { c.events.get(type).delete(fn); c.listeners.delete(fn) }
+    },
     onDispose: fn => { c.disposers.push(fn) },
     rest: async (p, opts) => {
       if (p === '/status') {
@@ -919,7 +931,7 @@ for (const [name, opts] of [['SESSION_ROW_AREAS', { rows: false }], ['COMPOSER_A
     })
     const toasts = oldStub.calls.notify.slice(before)
     const subs = oldStub.host.state.focusedSessionId.subs.size + oldStub.host.state.focusedStoredSessionId.subs.size
-    check(!threw && c.registered.length === 0 && c.pages.length === 0 && c.listeners.size === 0 && c.i18n === 0 && subs === 0 && c.notes.length === 0
+    check(!threw && c.registered.length === 0 && c.pages.length === 0 && c.listeners.size === 0 && c.events.size === 0 && c.i18n === 0 && subs === 0 && c.notes.length === 0
       && same(c.status, [{ method: 'POST', body: { desktop_ready: false } }]) && (notice ? updateToast(toasts) : toasts.length === 0),
       `${lock}without ${name}, update_notice ${notice}: register does not throw, registers nothing (no settings page), adds no listener, posts /status { desktop_ready: false } once and no /notes, ${notice ? 'one update warning' : 'no notice'} (${threw?.message ?? 'no throw'}; ${c.registered.length} contributions; ${JSON.stringify(c.status)}; ${JSON.stringify(toasts)})`)
   }
@@ -988,8 +1000,9 @@ m.unmount()
 r1.disposers.forEach(fn => fn())
 
 // 23e. /notes answers late: a live note it also holds shows once; a note dismissed meanwhile is not restored
-let release
-const r2 = fakeCtx(READY, { notes: () => new Promise(r => { release = r }) })
+const waiting2 = []
+const release = answer => waiting2.splice(0).forEach(r => r(answer))
+const r2 = fakeCtx(READY, { notes: () => new Promise(r => { waiting2.push(r) }) })
 await quietly(async () => {
   mod.default.register(r2.ctx)
   await settle()
@@ -1014,7 +1027,7 @@ rs = $(m.strip.el, '[data-asterisk="strip"]')
 check(rs?.getAttribute('data-folded') === 'true' && text($(rs, '.asterisk-label-count')) === '· 2 notes',
   `23e. restored notes do not unfold a folded strip (${rs?.getAttribute('data-folded')}, ${text($(rs, '[data-asterisk="label"]'))})`)
 await click($(m.strip.el, '[data-asterisk="fold"]'))
-check(same(liveHeads, ['Live and stored', 'Dismissed early']) && dismissedR && same(r2.notes, [{ method: 'POST', body: {} }])
+check(same(liveHeads, ['Live and stored', 'Dismissed early']) && dismissedR && r2.notes.length === 3 && r2.notes.every(x => same(x, { method: 'POST', body: {} }))
   && same(m.heads(), ['Restored first', 'Live and stored']) && same(m.dots(), { 'st-1': 0, 'st-2': 0, 'st-3': 0, 'st-4': 1, 'st-5': 1 }),
   `23e. a late /notes: the live note it also holds shows once, the note dismissed while it was pending is not restored (${liveHeads} -> ${m.heads()})`)
 m.unmount()
@@ -1230,6 +1243,70 @@ check(reportCalls() === reportsBefore + 1 && $$(pe.el, 'section').length === 3 &
 act(() => pe.root.unmount())
 pc.disposers.forEach(fn => fn())
 check(reactWarnings.length === 0, `25. React logged no warning on the settings page (${reactWarnings.slice(0, 2).join(' | ')})`)
+
+// 27. a chat deleted while the app runs (4.6.1): sessions.changed asks /notes and drops that chat's notes
+const changed = () => act(async () => {
+  for (const fn of listeners.get('sessions.changed') || []) fn({ type: 'sessions.changed', payload: {} })
+  await settle()
+  await settle()
+})
+const heads27 = () => $$(strip.el, '[data-asterisk="entry"]').map(e => text($(e, '[data-asterisk="headline"]')))
+let notes27 = notesCalls.length
+await changed()
+check(notesCalls.length === notes27, '27. with no note and no undo window, sessions.changed asks nothing')
+notesAnswer = { notes: [], gone: [] }
+await focus('rt-1', 'st-1')
+reply = { points: [point('Kept chat note', 'The assistant kept the old flag without saying so.')], cost_usd: 0.01, cost_status: 'estimated', model: 'fake-model-x', at: 8400.5, title: null }
+await emit('rt-1', frame('prune one', 840))
+await focus('rt-2', 'st-2')
+reply = { points: [point('Deleted chat note', 'The assistant removed the hook without saying so.')], cost_usd: 0.01, cost_status: 'estimated', model: 'fake-model-x', at: 8410.5, title: null }
+await emit('rt-2', frame('prune two', 841))
+notes27 = notesCalls.length
+const rest27 = rest.length
+const toasts27 = stub.calls.notify.length
+notesAnswer = { notes: [], gone: [] }
+await changed()
+check(notesCalls.length === notes27 + 1 && same(notesCalls.at(-1), { method: 'POST', body: {} }) && same(heads27(), ['Kept chat note', 'Deleted chat note']),
+  `27. with notes pending, sessions.changed posts /notes {}; nothing gone keeps every note (${heads27()})`)
+notesAnswer = { notes: [], gone: ['st-2', 'st-9'] }
+await changed()
+check(same(heads27(), ['Kept chat note']) && dots()['st-2'] === 0 && dots()['st-1'] === 1 && rest.length === rest27 && stub.calls.notify.length === toasts27,
+  `27. a gone chat's note leaves the strip and its dot goes; the other chat's note stays; nothing is posted or toasted (${heads27()}, ${JSON.stringify(dots())})`)
+await clickHeld(button(strip.el, 'Not sure'))
+notesAnswer = { notes: [], gone: ['st-1'] }
+await changed()
+check(stripGone() && held.size === 0 && rest.length === rest27, `27. a held rating of a gone chat's note is dropped with its undo row, unposted (${held.size} held)`)
+await elapse()
+check(rest.length === rest27, '27. the closed window posts nothing for the gone chat')
+notesAnswer = { notes: [], gone: [] }
+reply = { points: [point('Prune coalesced', 'The assistant left the lock in place without saying so.')], cost_usd: 0.01, cost_status: 'estimated', model: 'fake-model-x', at: 8420.5, title: null }
+await emit('rt-2', frame('prune three', 842))
+let release27
+notesAnswer = () => new Promise(r => { release27 = () => r({ notes: [], gone: [] }) })
+notes27 = notesCalls.length
+await changed()
+await changed()
+await changed()
+const inFlight27 = notesCalls.length - notes27
+notesAnswer = { notes: [], gone: ['st-2'] }
+await act(async () => { release27(); await settle(); await settle(); await settle() })
+check(inFlight27 === 1 && notesCalls.length === notes27 + 2 && stripGone(),
+  `27. changes while /notes is pending send one trailing /notes, not one each; its answer still prunes (${inFlight27} in flight, ${notesCalls.length - notes27} total)`)
+notesAnswer = { notes: [], gone: [] }
+reply = { points: [point('Prune failure', 'The assistant kept the retry loop without saying so.')], cost_usd: 0.01, cost_status: 'estimated', model: 'fake-model-x', at: 8430.5, title: null }
+await emit('rt-2', frame('prune four', 843))
+notesAnswer = new Error('network down')
+await quietly(changed)
+check(same(heads27(), ['Prune failure']) && stub.calls.notify.length === toasts27, '27. a failed /notes keeps the notes and shows no toast')
+notesAnswer = { notes: [], gone: ['st-2'] }
+await changed()
+check(stripGone(), '27. the next change drops it')
+notes27 = notesCalls.length
+reply = { points: [point('Checked while deleted', 'The assistant kept the branch without saying so.')], cost_usd: 0.01, cost_status: 'estimated', model: 'fake-model-x', at: 8440.5, title: null }
+await emit('rt-2', frame('prune five', 844))
+check(notesCalls.length === notes27 + 1 && stripGone() && dots()['st-2'] === 0,
+  `27. a note whose chat was deleted while its check ran is dropped right after it lands: each new note asks /notes once (${notesCalls.length - notes27})`)
+notesAnswer = { notes: [] }
 
 // 26. the 4.6.0 interface pass: undo, kind and severity, keys, sizes
 await focus('rt-1', 'st-1')

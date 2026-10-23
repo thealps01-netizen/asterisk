@@ -312,6 +312,7 @@ export function createWatcher(ctx, hostApi = host, { undoMs = UNDO_MS } = {}) {
     latest.set(note.headline)
     folded.set(false)
     if (ctx.pet?.visible?.get?.()) ctx.pet.say(t('asterisk.pet'), { id: ID, tone: 'info' })
+    void prune()
   }
 
   /** The note leaves the strip, nothing else. */
@@ -403,6 +404,43 @@ export function createWatcher(ctx, hostApi = host, { undoMs = UNDO_MS } = {}) {
     }
   }
 
+  let pruning = null
+  let pruneAgain = false
+  async function pruneOnce() {
+    let answer
+    try {
+      answer = await ctx.rest('/notes', { method: 'POST', body: {} })
+    } catch (err) {
+      console.warn(`[${ID}] chat check failed`, err)
+      return
+    }
+    const deleted = new Set(Array.isArray(answer?.gone) ? answer.gone : [])
+    if (!deleted.size) return
+    notes.set(notes.get().filter(n => !deleted.has(n.storedId)))
+    const held = undo.get()
+    if (held && deleted.has(held.note.storedId)) {
+      clearTimeout(undoTimer)
+      undoTimer = null
+      undo.set(null)
+    }
+  }
+
+  /** A chat was deleted while the app runs: its notes leave the strip, as they do at start. */
+  function prune() {
+    if (off || (!notes.get().length && !undo.get())) return undefined
+    if (pruning) {
+      pruneAgain = true
+      return pruning
+    }
+    pruning = (async () => {
+      do {
+        pruneAgain = false
+        await pruneOnce()
+      } while (pruneAgain)
+    })().finally(() => { pruning = null })
+    return pruning
+  }
+
   async function restore() {
     if (off) return
     let entries
@@ -429,7 +467,7 @@ export function createWatcher(ctx, hostApi = host, { undoMs = UNDO_MS } = {}) {
     notes.set([...back, ...notes.get().filter(n => !backAt.has(n.checkAt))])
   }
 
-  return { capture, noteFocus, onComplete, dismiss, gotIt, knew, notSure, notUseful, ask, toggleFold, fold: () => folded.set(true), takeBack, flush, status, restore, notes, folded, undo, latest, seen, checked }
+  return { capture, noteFocus, onComplete, dismiss, gotIt, knew, notSure, notUseful, ask, toggleFold, fold: () => folded.set(true), takeBack, flush, status, restore, prune, notes, folded, undo, latest, seen, checked }
 }
 
 // Typography, hairlines, the stroke and one chevron: no box, no fill. Every colour is an app theme
@@ -1066,6 +1104,7 @@ export default {
     ctx.onDispose(() => unlisten.forEach(fn => fn?.()))
     ctx.onDispose(() => void watcher.flush())
     ctx.onEvent('message.complete', event => void watcher.onComplete(event))
+    ctx.onEvent('sessions.changed', () => void watcher.prune())
     ctx.register({ id: 'headline', area: COMPOSER_AREAS.top, render: createStrip(watcher) })
     ctx.register({ id: 'dot', area: SESSION_ROW_AREAS.trailing, data: { render: createDot(watcher) } })
     ctx.registerSettingsPage?.({ id: 'settings', title: ctx.i18n.t('asterisk.title'), icon: 'eye', render: createSettingsPage(createSettings(ctx)) })

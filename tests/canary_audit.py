@@ -402,6 +402,17 @@ MUTATIONS = [
     ("the headline is a paragraph again", JS, "          jsx('h3', {\n            className: 'asterisk-headline',", "          jsx('p', {\n            className: 'asterisk-headline',"),
     ("the suggestion gets a thick side border", JS, ".asterisk-suggestion{display:flex;", ".asterisk-suggestion{border-left:2px solid var(--ui-accent);display:flex;"),
     ("a pending save disables the tones (focus is lost)", JS, "            'aria-disabled': busy ? 'true' : undefined,\n            tabIndex", "            disabled: busy,\n            tabIndex"),
+    # a chat deleted while the app runs (4.6.1)
+    ("sessions.changed is not listened to", JS, "    ctx.onEvent('sessions.changed', () => void watcher.prune())\n", ""),
+    ("prune ignores the gone list", JS, "    notes.set(notes.get().filter(n => !deleted.has(n.storedId)))\n", ""),
+    ("prune drops every note", JS, "notes.set(notes.get().filter(n => !deleted.has(n.storedId)))", "notes.set([])"),
+    ("a gone chat's held rating still posts", JS, "    if (held && deleted.has(held.note.storedId)) {\n", "    if (false) {\n"),
+    ("prune asks with no note pending", JS, "    if (off || (!notes.get().length && !undo.get())) return undefined\n", "    if (off) return undefined\n"),
+    ("every change sends its own /notes", JS, "    if (pruning) {\n      pruneAgain = true", "    if (false) {\n      pruneAgain = true"),
+    ("no trailing /notes for changes meanwhile", JS, "      } while (pruneAgain)\n", "      } while (false)\n"),
+    ("a failed prune toasts", JS, "      console.warn(`[${ID}] chat check failed`, err)\n", "      hostApi.notify({ id: `${ID}-restore-error`, kind: 'error', title: t('asterisk.title'), message: String(err) })\n"),
+    ("a new note does not ask /notes", JS, "{ id: ID, tone: 'info' })\n    void prune()\n", "{ id: ID, tone: 'info' })\n"),
+    ("/notes names no gone chat", API, '    return {"notes": entries, "gone": sorted(gone)}\n', '    return {"notes": entries, "gone": []}\n'),
 ]
 
 
