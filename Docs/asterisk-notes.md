@@ -217,7 +217,14 @@ which still holds no text. It keeps at most 50 notes; past that the oldest is dr
 chat", "Got it", "Already knew", "Not sure" and "Not useful" each remove the note from the file (`POST /dismiss`). At each app
 start the desktop half asks for the pending notes (`POST /notes`, after `/status`, only when
 Asterisk is on); a note whose chat no longer exists in the store is dropped then, with one
-`"gone": "chat_gone"` ledger line. When the store cannot be opened nothing is dropped. Restored
+`"gone": "chat_gone"` ledger line, and the answer's `gone` lists those chats' ids. **While the app
+runs (4.6.1)** the same request is sent on the app's `sessions.changed` event (the gateway's
+change watcher, at most every 2 s, present since v0.21.6), only while a note or an undo window is
+pending and one at a time (changes meanwhile send one trailing request), and once after each new
+note, since its chat may have been deleted while its check ran; the desktop half removes
+the notes of the chats in `gone` and drops a held rating of one unposted, since the backend already
+wrote its `chat_gone` line. A failed request only logs; the next `sessions.changed`, the next new
+note or the next start prunes. When the store cannot be opened nothing is dropped. Restored
 notes do not unfold the strip or make the pet speak. The gone lines are written only after
 `notes.json` was written.
 

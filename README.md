@@ -26,7 +26,8 @@ review.
 
 Pending notes survive an app restart: the text of each pending note (headline, sentence, chat title,
 model and cost) is kept on disk in `plugin-data/asterisk/notes.json` in your Hermes home until you
-dismiss it, at most 50 notes (past that the oldest is dropped). Asterisk sends it nowhere. It is
+dismiss it, at most 50 notes (past that the oldest is dropped). Deleting a chat drops its notes
+within a few seconds, and its sidebar dot goes. Asterisk sends it nowhere. It is
 separate from the ledger, which holds no text, and it is left there on uninstall (delete it by hand).
 
 ## What it reads, sends and writes

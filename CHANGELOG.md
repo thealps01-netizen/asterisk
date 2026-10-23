@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.6.1 (2026-10-24)
+
+- A chat deleted while the app runs takes its notes with it. Before, they stayed in the strip (and
+  the sidebar dot stayed) until the next start. The desktop half now listens to the app's
+  `sessions.changed` event (and after each new note, whose chat may have gone during its check)
+  and, while a note or an undo window is pending, asks `POST /notes`, which
+  drops the notes of deleted chats exactly as at start (one `chat_gone` ledger line each) and now
+  also answers `gone`, the deleted chats' ids. A held rating of such a note is dropped unposted. One
+  request at a time, with one trailing request for changes meanwhile; a failure only logs.
+
 ## 4.6.0 (2026-10-22)
 
 An interface pass after an Impeccable critique and audit (24/40 and 13/20 before it).
