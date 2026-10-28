@@ -48,6 +48,11 @@ const SEEN_MAX = 500
 const CHECKED_MAX = 300
 const STAGGER_MS = 80
 const UNDO_MS = 5000
+// How long the desktop half waits for POST /check. The backend gives the model TIMEOUT_S (90 s) per
+// attempt and the core may retry once and then try a fallback, so the app's 30 s default cut slow
+// checks off with a false "Could not check a reply" error. The check runs in the background, so a
+// long wait costs the interface nothing.
+export const CHECK_TIMEOUT_MS = 300_000
 const HIGH = new Set(['irreversible', 'security'])
 const SERIF = '"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif'
 
@@ -292,7 +297,7 @@ export function createWatcher(ctx, hostApi = host, { undoMs = UNDO_MS } = {}) {
       // The reply's OWN chat (not necessarily the focused one) and the turn's receipt. A missing one is
       // still sent: the backend decides whether to skip it.
       const body = { session_id: seen.get(sid) || null, turn: payload.persisted_turn || null }
-      const result = await ctx.rest('/check', { method: 'POST', body })
+      const result = await ctx.rest('/check', { method: 'POST', body, timeoutMs: CHECK_TIMEOUT_MS })
       note = noteFor(result, { key, storedId: seen.get(sid) })
     } catch (err) {
       const detail = String(err?.message || err)

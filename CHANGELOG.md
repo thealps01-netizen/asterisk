@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.6.2 (2026-10-28)
+
+- A slow check no longer shows a false "Could not check a reply: … Timed out connecting to Hermes
+  backend after 30000ms". The desktop half sent POST /check with the app's 30 s default wait while
+  the backend gives the model 90 s per attempt (and the core may retry once and try a fallback), so
+  a check that took 31 s was finished and recorded by the backend but reported as failed. The
+  request now waits `CHECK_TIMEOUT_MS` (300 s); a gate requires it to stay at least three times the
+  backend's `TIMEOUT_S`, and the canary removes it.
+
 ## 4.6.1 (2026-10-24)
 
 - A chat deleted while the app runs takes its notes with it. Before, they stayed in the strip (and

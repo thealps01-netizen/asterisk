@@ -22,6 +22,8 @@
  *      chat (even when another chat is in focus) and the frame's persisted_turn receipt as is; never
  *      the reply's text. A frame without a receipt still posts, with turn: null; the backend's
  *      skip answer { points: [], skipped } shows no note and no toast (the user's live case).
+ *      The request waits CHECK_TIMEOUT_MS, at least three times the backend's TIMEOUT_S (one model
+ *      attempt, the core's same-provider retry, one fallback), not the app's 30 s default (4.6.2).
  *   5. The strip: only its hidden live line when no note is pending; a point is a note, never a
  *      toast. One note: the label "Worth knowing · <kind>", no number, headline, sentence, meta
  *      "<model> · <cost> · decided by ...", "Ask in chat" for the focused chat ("Open" for another
@@ -384,6 +386,9 @@ check(rest.length === 1 && rest[0][0] === '/check' && rest[0][1]?.method === 'PO
 check(same(Object.keys(body1 || {}).sort(), ['session_id', 'turn']) && body1.session_id === 'st-1' && same(body1.turn, receipt(10)),
   `the body is { session_id, turn }: the chat's stored id and the frame's receipt as is (${JSON.stringify(body1)})`)
 check(!('text' in (body1 || {})) && !JSON.stringify(body1).includes(LONG.slice(0, 50)), 'the reply\'s text is not sent')
+const backendTimeoutS = Number(/^TIMEOUT_S = (\d+)$/m.exec(readFileSync(path.join(HERE, '..', 'dashboard', 'plugin_api.py'), 'utf8'))?.[1])
+check(Number.isFinite(backendTimeoutS) && rest[0]?.[1]?.timeoutMs === mod.CHECK_TIMEOUT_MS && mod.CHECK_TIMEOUT_MS >= 3 * backendTimeoutS * 1000,
+  `4. /check waits CHECK_TIMEOUT_MS, at least 3 x the backend's TIMEOUT_S, not the app's 30 s default (${rest[0]?.[1]?.timeoutMs} ms, backend ${backendTimeoutS} s)`)
 check(stub.calls.notify.length === 0, `a point is a note, not a toast (${stub.calls.notify.length} notify calls)`)
 let s = $(strip.el, '[data-asterisk="strip"]')
 check(s?.getAttribute('data-count') === '1' && s?.getAttribute('role') === 'region' && s?.getAttribute('aria-label') === 'Worth knowing'
