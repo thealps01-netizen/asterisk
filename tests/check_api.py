@@ -163,6 +163,14 @@ import tempfile
 import types
 from pathlib import Path
 
+# Every temporary file of a run lives under one directory that the run removes. Bare mkdtemp calls
+# left about 37 directories per run in the system temp folder, about 10,000 per canary run.
+import atexit  # noqa: E402
+import shutil  # noqa: E402
+RUN_TMP = Path(tempfile.mkdtemp(prefix="asterisk-check-api-"))
+tempfile.tempdir = str(RUN_TMP)
+atexit.register(shutil.rmtree, RUN_TMP, ignore_errors=True)
+
 HERE = Path(__file__).resolve().parent
 API = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else HERE.parent / "dashboard" / "plugin_api.py"
 EVAL = API.parent.parent / "eval" / "compare_checkers.py"
@@ -1730,6 +1738,11 @@ check(got == [{"kind": "tradeoff", "negative": 10, "rated": 10}], f"26g. Plain n
 Fake.answers = []
 Fake.answer = '{"points": []}'
 os.environ["HERMES_HOME"] = str(home)
+
+tempfile.tempdir = None
+shutil.rmtree(RUN_TMP, ignore_errors=True)
+check(not RUN_TMP.exists() and all(p.is_relative_to(RUN_TMP) for p in (home, fake_core)),
+      f"the run's temporary files all lived under one directory, and it is gone ({RUN_TMP})")
 
 print(f"\n{failures} FAILED" if failures else "\nALL PASSED")
 sys.exit(1 if failures else 0)

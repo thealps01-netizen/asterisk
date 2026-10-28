@@ -35,6 +35,7 @@ MUTATIONS = [
      "  if (result?.skipped) throw new Error(result.skipped)\n  if (!point) return null\n"),
     ("a chat never opened here is checked", JS, "if (!sid || !seen.has(sid) || !eligible(payload)) return", "if (!sid || !eligible(payload)) return"),
     ("the same reply is checked twice", JS, "    if (checked.has(key)) return\n", ""),
+    ("check_api.py leaves its temporary directory behind", "tests/check_api.py", "shutil.rmtree(RUN_TMP, ignore_errors=True)\ncheck(", "check("),
     ("/check falls back to the app's 30 s wait", JS, ", timeoutMs: CHECK_TIMEOUT_MS })", " })"),
     ("the reply key covers only the head", JS, "for (let i = 0; i < text.length; i++)", "for (let i = 0; i < Math.min(text.length, 1000); i++)"),
     ("the focus pair is read before both atoms settle", JS, "    queueMicrotask(() => {\n      pending = false\n      capture()\n    })",
