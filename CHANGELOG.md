@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.6.3 (2026-11-13)
+
+- The web dashboard (`hermes dashboard`, `hermes serve`) no longer lists an "Asterisk" tab. That
+  tab opened on "Could not load this plugin's script": Asterisk draws only inside the desktop app,
+  and the dashboard has no script to load for it. The manifest now hides the tab (`tab.hidden`).
+  The desktop half and the backend routes are unchanged. Opening `/asterisk` in the dashboard by
+  typing the address still shows that message, because Hermes keeps the address of a hidden tab.
+  A gate fails a manifest that shows a dashboard tab without shipping the tab's script, and the
+  canary breaks it.
+
 ## 4.6.2 (2026-10-28)
 
 - A slow check no longer shows a false "Could not check a reply: … Timed out connecting to Hermes

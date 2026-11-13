@@ -200,6 +200,7 @@ MUTATIONS = [
     ("the update notice shows without update_notice: true", JS, "answer?.update_notice === true && ", ""),
     # the name
     ("manifest.json's name goes back to the 2.x name", MANIFEST, '"name": "asterisk"', '"name": "you-should-know"'),
+    ("the web dashboard lists a tab that has no script", MANIFEST, '"hidden": true', '"hidden": false'),
     ("the auxiliary task goes back to the 2.x name", API, "call_llm(task=PLUGIN_ID,", 'call_llm(task="you_should_know",'),
     # check scope (4.1.0): skips, trigger, earlier messages, kinds
     ("a missing receipt is a 400 again", API, '    if turn is None:\n        return False\n', '    if turn is None:\n        return True\n'),
