@@ -68,7 +68,7 @@ jobs:
             /apps/desktop/src/api/plugins.ts /apps/desktop/electron/desktop-plugins-root.ts /apps/desktop/src/sdk/runtime.ts \
             /apps/desktop/src/app/capabilities/plugins/plugins-tab.tsx /apps/desktop/src/i18n/en.ts \
             /apps/desktop/src/i18n/en_model_settings.ts \
-            /hermes_cli/plugins.py /hermes_cli/web_routers/models.py /apps/desktop/src/app/settings/aux-task-rows.tsx \
+            /hermes_cli/plugins.py /hermes_cli/plugins_context.py /hermes_cli/web_routers/models.py /apps/desktop/src/app/settings/aux-task-rows.tsx \
             /agent/tool_result_classification.py \
             /agent/context_compressor.py \
             /agent/turn_context_compaction.py \
@@ -122,6 +122,11 @@ jobs:
           - { name: v0.22.2, sha: d923a5eb487a17c0a68801bba9ef0f56c81040a8 }
           - { name: v0.22.3, sha: 5b147ab036d6d19131bff8d20701b5001eab844a }
           - { name: v0.22.4, sha: 4d04303818b61bf3aa09278af48356315515965b }
+          - { name: v0.22.5, sha: bf0203a794a07aac3ff764972ab9087baa4e4f4e }
+          - { name: v0.22.6, sha: f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab }
+          - { name: v0.22.7, sha: b200f5bc60e31588ba2cb60e288029c4a54ba5fa }
+          - { name: v0.23.0, sha: 2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19 }
+          - { name: v0.23.1, sha: 3b421578588243f920886e6fe79a6faa87ea026e }
           - { name: pin, sha: d4d2ab7b5d104166e7e22a02cafd12f1fe456a31 }
     defaults:
       run:
@@ -148,7 +153,7 @@ jobs:
       - name: The core's dependencies
         run: |
           python -m pip install --quiet "uv==0.12.*"
-          uv pip install --system --quiet -r "$CORE/pyproject.toml" "fastapi==0.115.*"
+          uv pip install --system --quiet --project "$CORE" -r "$CORE/pyproject.toml" "fastapi==0.115.*"
 
       - name: Core contract and its selftest
         working-directory: tests
