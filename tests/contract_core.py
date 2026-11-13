@@ -39,13 +39,15 @@ Seams:
   route        the backend mounts at /api/plugins/<manifest.json name>, and only for a user plugin whose
                name is in plugins.enabled
   rest         the desktop's ctx.rest reaches /api/plugins/<plugin.js id><path>: the three names must agree
-  desktophalf  the desktop half is a copy of plugins/<folder>/desktop named after the folder, pruned when
+  desktophalf  the desktop half is a copy of plugins/<folder>/desktop named after the folder (v0.22.6
+               looks for a plugin.js in the package root first; Asterisk has none there), pruned when
                its package's plugin.js is gone (how an uninstall removes the 2.x half)
   remove       uninstall moves the package tree out of plugins/ (os.replace), its own folder only
   shim         the SDK shim exports only the names it has (a namespace import always links)
   installui    Capabilities -> Plugins offers "Install from Git" and "Uninstall" (the README's steps)
   auxtask      a plugin's register(ctx) can call ctx.register_auxiliary_task(key, *, display_name,
-               description, ...), and the registered tasks are served (get_plugin_auxiliary_tasks)
+               description, ...) (in hermes_cli/plugins.py, or plugins_context.py from v0.23.1 on),
+               and the registered tasks are served (get_plugin_auxiliary_tasks)
   taskroute    _resolve_task_provider_model(task, provider, model, ...) prefers explicit args over the
                task's config, and answers ("auto", model, None, None, api_mode) when nothing is pinned
                (how the backend tells "no model chosen" without reading config.yaml itself)
@@ -108,7 +110,7 @@ FILES = {
     "plugins_tab": "apps/desktop/src/app/capabilities/plugins/plugins-tab.tsx",
     "en": "apps/desktop/src/i18n/en.ts",
     "en_models": ("apps/desktop/src/i18n/en.ts", "apps/desktop/src/i18n/en_model_settings.ts"),
-    "plugins": "hermes_cli/plugins.py",
+    "plugins": ("hermes_cli/plugins.py", "hermes_cli/plugins_context.py"),
     "models_router": "hermes_cli/web_routers/models.py",
     "aux_rows": "apps/desktop/src/app/settings/aux-task-rows.tsx",
     "classify": "agent/tool_result_classification.py",
@@ -194,7 +196,8 @@ SEAMS: dict[str, list[tuple[str, str]]] = {
               ("dashboard", lit('if source == "user" and plugin_name not in enabled_set:'))],
     "rest": [("api_plugins", lit("path: `/api/plugins/${pluginId}${suffix}`")),
              ("ctx", lit("rest: <T>(path: string, opts?: PluginRestOptions) => pluginRest<T>(pluginId, path, opts),"))],
-    "desktophalf": [("desktop_root", lit("const sourceDir = path.join(packageDir, 'desktop')")),
+    "desktophalf": [("desktop_root", "(?:" + lit("const sourceDir = path.join(packageDir, 'desktop')") + "|"
+                                     + lit("const DESKTOP_SOURCE_DIRS = ['.', 'desktop'] as const") + ")"),
                     ("desktop_root", lit("const target = path.join(appRoot, packageName)")),
                     ("desktop_root", lit("result = await materializeDesktopHalf(path.join(pluginsRoot, name), appRoot, name)")),
                     ("desktop_root", lit("if (marker && (await sourceGone(name, path.join(marker.source, 'plugin.js')))) {"))],
