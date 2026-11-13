@@ -45,6 +45,10 @@ Rules:
               NOTES_FILE = "notes.json" and a NOTES_MAX, keeps the ledger in state/asterisk/, and the
               notes (plugin-data/asterisk/notes.json, "at most <NOTES_MAX> notes") and README.md
               (plugin-data/asterisk/notes.json) say the note text is kept on disk
+  dashboard   the web dashboard (`hermes dashboard`) loads dashboard/<entry> (default dist/index.js)
+              for every manifest and lists a tab for it unless `tab.hidden` is true; this plugin
+              ships no such script (its UI is desktop-only), so the manifest must hide the tab or
+              the dashboard lists a tab that opens on "Could not load this plugin's script"
   installed   the desktop copy the app loads equals desktop/plugin.js (only when it exists here)
 """
 from __future__ import annotations
@@ -115,6 +119,12 @@ def audit(root: Path, installed: Path | None, core: Path) -> list[str]:
     versions = {yaml_version.group(1) if yaml_version else None, manifest.get("version"), heading.group(1) if heading else None}
     if len(versions) != 1 or None in versions:
         problems.append(f"versions: plugin.yaml / manifest / CHANGELOG disagree {sorted(map(str, versions))}")
+
+    entry = manifest.get("entry", "dist/index.js")
+    tab = manifest.get("tab") if isinstance(manifest.get("tab"), dict) else {}
+    if not (isinstance(entry, str) and (root / "dashboard" / entry).is_file()) and not tab.get("hidden"):
+        problems.append(f"dashboard: manifest.json shows a web dashboard tab but dashboard/{entry} does not exist — "
+                        'the tab would fail to load; set "tab": {"hidden": true} or ship the script')
 
     yaml_name = re.search(r"^name:\s*(\S+)$", yaml_text, re.M)
     plugin_id = re.search(r'^PLUGIN_ID = "([^"]+)"$', api, re.M)
